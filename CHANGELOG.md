@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.1.0](https://github.com/rossy92/svxrender/compare/v1.0.5...v1.1.0) (2025-08-29)
+
+
+### Features
+
+* **normalize:** add "Attack on Titan OAD" ([dcadc5d](https://github.com/rossy92/svxrender/commit/dcadc5dd2706007d20b2ee01f40fcb4343169041))
+* **normalize:** add "Parasyte: The Maxim" ([6cb4a4b](https://github.com/rossy92/svxrender/commit/6cb4a4b86ab541a08a893e12d2cf708956694850))
+* **normalize:** add "Slam Dunk: Roar!! Basket Man Spiriy" ([3407885](https://github.com/rossy92/svxrender/commit/340788547f5b9f3e7477fc77426790c893d12b6a))
+
+
+### Bug Fixes
+
+* env ([2f80845](https://github.com/rossy92/svxrender/commit/2f808459f84c36ef62277212d56c0fd9e027bded))
+* move dynamic channels to /tmp ([4abc561](https://github.com/rossy92/svxrender/commit/4abc5613a66062d0220fc46629f920c64859996f))
+* move dynamic event to /tmp ([4abc561](https://github.com/rossy92/svxrender/commit/4abc5613a66062d0220fc46629f920c64859996f))
+* Update extractor.ts ([2bf1614](https://github.com/rossy92/svxrender/commit/2bf1614055daa22eb0921daaa93b2a610173e012))
+* updating name ([a8c3c2d](https://github.com/rossy92/svxrender/commit/a8c3c2d177f7641af6174e059517d2f659a017e5))
+* vixsrc fhd ([be462ca](https://github.com/rossy92/svxrender/commit/be462cac4aa6d3b88cf1479cedc42c28102224dd))
+* Working toggle - Vixsrc size ([52d0a53](https://github.com/rossy92/svxrender/commit/52d0a53aeabf142258b1ca36c334cc5c58b41032))
+
 ## [1.0.5](https://github.com/qwertyuiop8899/streamvix/compare/v1.0.4...v1.0.5) (2025-08-29)
 
 
