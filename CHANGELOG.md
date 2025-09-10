@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.45](https://github.com/qwertyuiop8899/streamvix/compare/v1.0.44...v1.0.45) (2025-09-09)
+
+
+### Bug Fixes
+
+* AW files ([a7b7b91](https://github.com/qwertyuiop8899/streamvix/commit/a7b7b918b8bf1cbe2625be75fc42c6b0f742fc04))
+
+## [1.0.44](https://github.com/qwertyuiop8899/streamvix/compare/v1.0.43...v1.0.44) (2025-09-09)
+
+
+### Bug Fixes
+
+* aw sub e ita ([6880b8c](https://github.com/qwertyuiop8899/streamvix/commit/6880b8c33873a6f5af05d9a7c2cd444a365144d6))
+
+## [1.0.43](https://github.com/qwertyuiop8899/streamvix/compare/v1.0.42...v1.0.43) (2025-09-09)
+
+
+### Bug Fixes
+
+* es with 0 retry ([fbb526a](https://github.com/qwertyuiop8899/streamvix/commit/fbb526a4bab605a4459f2eab136a0c7d163129e5))
+* GS and ES fix ([55dd33a](https://github.com/qwertyuiop8899/streamvix/commit/55dd33aa7ced7dcc21bbe2c0394394a834070bdf))
+
 ## [1.0.42](https://github.com/qwertyuiop8899/streamvix/compare/v1.0.41...v1.0.42) (2025-09-08)
 
 
