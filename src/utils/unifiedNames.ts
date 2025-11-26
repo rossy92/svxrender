@@ -23,8 +23,8 @@ export function formatBytesHuman(b?: number): string {
 
 export function providerLabel(provider: string, isFhd?: boolean): string {
   switch (provider) {
-    case 'vixsrc': return `🤌 VixSrc 🍿${isFhd ? ' 🅷🅳' : ''}`;
-    case 'animeunity': return '🤌 Anime Unity ⛩️';
+    case 'vixsrc': return `🤌 VixSrc 🍿${isFhd ? ' 🅵🅷🅳' : ''}`;
+  case 'animeunity': return `🤌 Anime Unity ⛩️${isFhd ? ' 🅵🅷🅳' : ''}`; // Added dynamic FHD marker
     case 'animesaturn': return '🤌 Anime Saturn 🪐';
     case 'animeworld': return '🤌 Anime World 🌍';
     case 'guardaserie': return '🤌 GuardaSerie 🎥';
@@ -32,6 +32,8 @@ export function providerLabel(provider: string, isFhd?: boolean): string {
     case 'cb01': return '🤌 CB01 🎞️';
     case 'streamingwatch': return '🤌 StreamingWatch 📼';
     case 'eurostreaming': return '🤌 Eurostreaming';
+    case 'loonex': return '🤌 Loonex 🎬';
+    case 'toonitalia': return '🤌 ToonItalia 🎨';
     default: return provider;
   }
 }
@@ -63,5 +65,7 @@ export function mapLegacyProviderName(legacy: string): string {
   if (lower.includes('streamvix cb')) return providerLabel('cb01');
   if (lower.includes('streamvix sw')) return providerLabel('streamingwatch');
   if (lower.includes('streamvix es')) return providerLabel('eurostreaming');
+  if (lower.includes('loonex')) return providerLabel('loonex');
+  if (lower.includes('toonitalia')) return providerLabel('toonitalia');
   return legacy;
 }

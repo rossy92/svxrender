@@ -14,6 +14,11 @@ thanks to @urlomythus for the code https://github.com/UrloMythus/MammaMia/blob/m
  *  - Cache semplice in-memory (TTL 6h)
  */
 import type { StreamForStremio } from '../types/animeunity';
+import axios from 'axios';
+import * as https from 'https';
+
+// Dynamic require per proxy agent
+const HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent;
 
 // --- Debug helpers ---
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,9 +75,91 @@ export class Cb01Provider {
   private norm(q:string){
     return q.replace(/[òò]/g,'o').replace(/[èé]/g,'e').replace(/[àá]/g,'a').replace(/[ùú]/g,'u').replace(/[ìí]/g,'i').replace(/[^a-zA-Z0-9 ]+/g,' ').trim().replace(/\s+/g,'+');
   }
-  private async fetch(url:string, referer?:string){
-    const res = await fetch(url,{ headers:{ 'User-Agent': this.userAgent, 'Referer': referer||this.baseFilm, 'Accept':'text/html' } });
-    if(!res.ok) throw new Error('http '+res.status); return await res.text();
+
+  /**
+   * Fetch with automatic proxy retry on IP block (403/400)
+   * 1. Attempt: Direct (no proxy)
+   * 2. Attempt: DLHD_PROXY (timeout 5s)
+   * 3. Attempt: PROXY (fallback se DLHD_PROXY fallisce)
+   */
+  private async fetch(url:string, referer?:string): Promise<string> {
+    const headers = { 
+      'User-Agent': this.userAgent, 
+      'Referer': referer||this.baseFilm, 
+      'Accept':'text/html' 
+    };
+
+    // Attempt 1: Direct fetch (no proxy)
+    try {
+      const res = await fetch(url, { headers });
+      if(!res.ok) throw new Error('http '+res.status);
+      return await res.text();
+    } catch (error: any) {
+      const status = error.message?.match(/http (\d+)/)?.[1];
+      
+      // Only retry with proxy if IP is blocked (403/400)
+      if (status !== '403' && status !== '400') {
+        throw error;
+      }
+      
+      log('IP blocked ('+status+'), trying with proxies...');
+    }
+
+    // Attempt 2: Try with DLHD_PROXY (timeout 5s)
+    if (process.env.DLHD_PROXY) {
+      try {
+        log('Trying DLHD_PROXY (timeout 3s)...');
+        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+        const proxyAgent = new HttpsProxyAgent(process.env.DLHD_PROXY, {
+          rejectUnauthorized: false
+        });
+        
+        const response = await axios.get(url, {
+          headers,
+          httpsAgent: proxyAgent,
+          proxy: false,
+          timeout: 4000  // 4 secondi
+        });
+        
+        log('✅ DLHD_PROXY works for', url);
+        return response.data;
+      } catch (proxyError: any) {
+        const isTimeout = proxyError.code === 'ECONNABORTED' || proxyError.message?.includes('timeout');
+        if (isTimeout) {
+          warn('DLHD_PROXY timeout after 5s, trying PROXY fallback...');
+        } else {
+          warn('DLHD_PROXY failed:', proxyError.message);
+        }
+        // Continue to PROXY fallback
+      }
+    }
+
+    // Attempt 3: Try with PROXY (fallback)
+    if (process.env.PROXY) {
+      try {
+        log('Trying PROXY fallback...');
+        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+        const proxyAgent = new HttpsProxyAgent(process.env.PROXY, {
+          rejectUnauthorized: false
+        });
+        
+        const response = await axios.get(url, {
+          headers,
+          httpsAgent: proxyAgent,
+          proxy: false,
+          timeout: 10000  // 10 secondi per fallback
+        });
+        
+        log('✅ PROXY fallback works for', url);
+        return response.data;
+      } catch (proxyError: any) {
+        warn('PROXY fallback failed:', proxyError.message);
+        throw proxyError;
+      }
+    }
+
+    // No proxy available or all failed
+    throw new Error('IP blocked and no working proxy available');
   }
   private async ensureDomain(){
     const now = Date.now();

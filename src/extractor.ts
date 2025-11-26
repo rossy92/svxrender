@@ -10,6 +10,62 @@ const VIXCLOUD_EMBED_BASE_PATH = "/embed"; // Base path for embed URLs, e.g., /e
 // --- TMDB Configuration ---
 const TMDB_API_BASE_URL = "https://api.themoviedb.org/3";
 
+// --- IMDB to TMDB Static Mapping ---
+interface ImdbToTmdbMapping {
+  imdbSeason: number;
+  tmdb_id: string;
+}
+
+interface ImdbToTmdbEntry {
+  title: string;
+  note?: string;
+  mappings: ImdbToTmdbMapping[];
+}
+
+interface ImdbToTmdbMap {
+  [imdbId: string]: ImdbToTmdbEntry;
+}
+
+let IMDB_TO_TMDB_MAP: ImdbToTmdbMap = {};
+
+try {
+  const mappingPath = path.join(__dirname, 'config', 'imdbToTmdb.json');
+  if (fs.existsSync(mappingPath)) {
+    IMDB_TO_TMDB_MAP = JSON.parse(fs.readFileSync(mappingPath, 'utf-8'));
+    console.log(`[IMDB→TMDB] Caricato mapping statico: ${Object.keys(IMDB_TO_TMDB_MAP).length} serie`);
+  }
+} catch (error) {
+  console.warn('[IMDB→TMDB] Impossibile caricare mapping statico:', error);
+}
+
+/**
+ * Cerca un mapping statico IMDB→TMDB per una specifica stagione.
+ * Usato per serie con ID TMDB diversi per stagione (es. Monster).
+ * Supporta anche entry semplici con solo tmdb_id diretto (senza mappings).
+ * @param imdbId - ID IMDB (es. "tt13207736")
+ * @param season - Numero stagione (es. 1, 2, 3)
+ * @returns TMDB ID per quella stagione se trovato, altrimenti null
+ */
+function getStaticTmdbMapping(imdbId: string, season: number): string | null {
+  const entry = IMDB_TO_TMDB_MAP[imdbId];
+  if (!entry) return null;
+  
+  // Entry semplice: solo tmdb_id diretto (senza array mappings)
+  if ((entry as any).tmdb_id && !entry.mappings) {
+    console.log(`[IMDB→TMDB] Mapping statico semplice trovato: ${imdbId} → TMDB ${(entry as any).tmdb_id} (${entry.title})`);
+    return (entry as any).tmdb_id;
+  }
+  
+  // Entry con mappings per stagione
+  const mapping = entry.mappings?.find(m => m.imdbSeason === season);
+  if (mapping) {
+    console.log(`[IMDB→TMDB] Mapping statico trovato: ${imdbId} S${season} → TMDB ${mapping.tmdb_id} (${entry.title})`);
+    return mapping.tmdb_id;
+  }
+  
+  return null;
+}
+
 // --- End Configuration ---
 
 // Ensures playlist URLs have .m3u8 after numeric id: /playlist/12345 => /playlist/12345.m3u8
@@ -114,7 +170,14 @@ function getObject(id: string) {
   };
 }
 
-export async function getTmdbIdFromImdbId(imdbId: string, tmdbApiKey?: string): Promise<string | null> {
+export async function getTmdbIdFromImdbId(imdbId: string, tmdbApiKey?: string, preferredType?: 'movie' | 'tv'): Promise<string | null> {
+  // Prima controlla il mapping statico (per ID non linkati correttamente in TMDB)
+  const entry = IMDB_TO_TMDB_MAP[imdbId];
+  if (entry && (entry as any).tmdb_id && !entry.mappings) {
+    console.log(`[IMDB→TMDB] Mapping statico semplice usato: ${imdbId} → TMDB ${(entry as any).tmdb_id} (${entry.title})`);
+    return (entry as any).tmdb_id;
+  }
+  
   if (!tmdbApiKey) {
     console.error("TMDB_API_KEY is not configured.");
     return null;
@@ -127,11 +190,28 @@ export async function getTmdbIdFromImdbId(imdbId: string, tmdbApiKey?: string): 
       return null;
     }
     const data = await response.json();
-    if (data.movie_results && data.movie_results.length > 0) {
-      return data.movie_results[0].id.toString();
-    } else if (data.tv_results && data.tv_results.length > 0) {
-      return data.tv_results[0].id.toString();
+    
+    // Priorità intelligente: se preferredType è specificato, cerca prima quel tipo
+    const movieResults = data.movie_results || [];
+    const tvResults = data.tv_results || [];
+    
+    if (preferredType === 'tv' && tvResults.length > 0) {
+      console.log(`[IMDB→TMDB] Preferred TV: ${imdbId} → TMDB ${tvResults[0].id} (${tvResults[0].name})`);
+      return tvResults[0].id.toString();
+    } else if (preferredType === 'movie' && movieResults.length > 0) {
+      console.log(`[IMDB→TMDB] Preferred Movie: ${imdbId} → TMDB ${movieResults[0].id} (${movieResults[0].title})`);
+      return movieResults[0].id.toString();
     }
+    
+    // Fallback: se preferredType non trova nulla, prova l'altro tipo
+    if (movieResults.length > 0) {
+      console.log(`[IMDB→TMDB] Fallback Movie: ${imdbId} → TMDB ${movieResults[0].id} (${movieResults[0].title})`);
+      return movieResults[0].id.toString();
+    } else if (tvResults.length > 0) {
+      console.log(`[IMDB→TMDB] Fallback TV: ${imdbId} → TMDB ${tvResults[0].id} (${tvResults[0].name})`);
+      return tvResults[0].id.toString();
+    }
+    
     console.warn(`No TMDB movie or TV results found for IMDb ID: ${imdbId}`);
     return null;
   } catch (error) {
@@ -151,7 +231,8 @@ async function checkTmdbIdOnVixSrc(tmdbId: string, type: ContentType): Promise<b
     } catch { return false; }
   })();
   const vixSrcApiType = type === 'movie' ? 'movie' : 'tv'; // VixSrc usa 'tv' per le serie
-  const listUrl = `${VIXCLOUD_SITE_ORIGIN}/api/list/${vixSrcApiType}?lang=it`;
+  const listUrl = `${VIXCLOUD_SITE_ORIGIN}/api/list/${vixSrcApiType}`;
+//   const listUrl = `${VIXCLOUD_SITE_ORIGIN}/api/list/${vixSrcApiType}?lang=it`;
 
   try {
     console.log(`VIX_CHECK: Checking TMDB ID ${tmdbId} of type ${vixSrcApiType} against VixSrc list: ${listUrl}`);
@@ -208,7 +289,8 @@ async function checkEpisodeOnVixSrc(tmdbId: string, season: number, episode: num
       return ['1','true','on','yes','y'].includes(v);
     } catch { return false; }
   })();
-  const listUrl = `${VIXCLOUD_SITE_ORIGIN}/api/list/episode/?lang=it`;
+  const listUrl = `${VIXCLOUD_SITE_ORIGIN}/api/list/episode/`;
+//const listUrl = `${VIXCLOUD_SITE_ORIGIN}/api/list/episode/?lang=it`;
   try {
     console.log(`VIX_EP_CHECK: Checking TMDB ID ${tmdbId} S${season}E${episode} against VixSrc episode list: ${listUrl}`);
     const response = await fetch(listUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (StreamViX EarlyDirect)', 'Accept': 'application/json' } });
@@ -259,7 +341,7 @@ export async function getUrl(id: string, type: ContentType, config: ExtractorCon
       tmdbId = id.split(':')[1] || null;
     } else {
       const imdbIdForMovie = id; // legacy imdb id
-      tmdbId = await getTmdbIdFromImdbId(imdbIdForMovie, config.tmdbApiKey);
+      tmdbId = await getTmdbIdFromImdbId(imdbIdForMovie, config.tmdbApiKey, 'movie');
       if (!tmdbId) return null;
     }
     if (!tmdbId) return null;
@@ -280,15 +362,35 @@ export async function getUrl(id: string, type: ContentType, config: ExtractorCon
   let tmdbSeriesId: string | null = null;
   let seasonStr: string | undefined;
   let episodeStr: string | undefined;
+  let imdbIdForMapping: string | null = null; // Per mapping statico
+  
   if (rawParts[0] === 'tmdb') {
     tmdbSeriesId = rawParts[1] || null;
     seasonStr = rawParts[2];
     episodeStr = rawParts[3];
   } else {
     const obj = getObject(id); // interprets legacy imdb format
-    tmdbSeriesId = await getTmdbIdFromImdbId(obj.id, config.tmdbApiKey);
+    imdbIdForMapping = obj.id; // Salva IMDB ID per mapping statico
     seasonStr = obj.season;
     episodeStr = obj.episode;
+    
+    // Prima controlla se c'è un mapping statico per questa serie+stagione
+    const seasonNum = Number(seasonStr);
+    if (!isNaN(seasonNum) && imdbIdForMapping) {
+      const staticTmdbId = getStaticTmdbMapping(imdbIdForMapping, seasonNum);
+      if (staticTmdbId) {
+        tmdbSeriesId = staticTmdbId;
+        // IMPORTANTE: Quando usiamo mapping statico, la serie TMDB separata
+        // ricomincia sempre da stagione 1! (es. Monster S2 su IMDB = S1 su TMDB 225634)
+        seasonStr = "1";
+        console.log(`[IMDB→TMDB] Usato mapping statico: ${imdbIdForMapping} S${seasonNum} → TMDB ${staticTmdbId} S1 (serie TMDB separata)`);
+      }
+    }
+    
+    // Se non trovato mapping statico, usa API TMDB classica
+    if (!tmdbSeriesId) {
+      tmdbSeriesId = await getTmdbIdFromImdbId(obj.id, config.tmdbApiKey, 'tv');
+    }
   }
   if (!tmdbSeriesId) return null;
   const seasonNum = Number(seasonStr);
@@ -403,7 +505,7 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
     if (imdbOrTmdbId.startsWith('tmdb:')) {
       tmdbId = imdbOrTmdbId.split(':')[1] || null;
     } else {
-      tmdbId = await getTmdbIdFromImdbId(imdbOrTmdbId, tmdbApiKey);
+      tmdbId = await getTmdbIdFromImdbId(imdbOrTmdbId, tmdbApiKey, 'movie');
     }
     if (!tmdbId) return null;
     const movieDetailsUrl = `${TMDB_API_BASE_URL}/movie/${tmdbId}?api_key=${tmdbApiKey}&language=it`;
@@ -428,7 +530,7 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
       const parts = imdbOrTmdbComposite.split(':');
       tmdbId = parts[1] || null; // tmdb:tmdbId:season:episode
     } else {
-      tmdbId = await getTmdbIdFromImdbId(imdbOrTmdbComposite.split(':')[0], tmdbApiKey);
+      tmdbId = await getTmdbIdFromImdbId(imdbOrTmdbComposite.split(':')[0], tmdbApiKey, 'tv');
     }
     if (!tmdbId) return null;
     const seriesDetailsUrl = `${TMDB_API_BASE_URL}/tv/${tmdbId}?api_key=${tmdbApiKey}&language=it`;
@@ -663,27 +765,52 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
         throw new Error("Failed to extract token, expires, or server URL from script.");
       }
 
-      const token = tokenMatch[1];
-      const expires = expiresMatch[1];
-      let serverUrl = serverUrlMatch[1];
+  const token = tokenMatch[1];
+  const expires = expiresMatch[1];
+  let serverUrl = serverUrlMatch[1];
+  let finalStreamUrl: string;
 
-      let finalStreamUrl = serverUrl.includes("?b=1")
-        ? `${serverUrl}&token=${token}&expires=${expires}`
-        : `${serverUrl}?token=${token}&expires=${expires}`;
-      finalStreamUrl = ensurePlaylistM3u8(finalStreamUrl);
-
-      // Aggiungi &h=1 solo se disponibile
-      if (scriptContent.includes("window.canPlayFHD = true")) {
-        finalStreamUrl += "&h=1";
+      // Costruzione URL finale stile webstreamr:
+      // 1. Normalizza /playlist/<id> aggiungendo .m3u8 se manca
+      // 2. Se l'URL originale conteneva già b=1 lo manteniamo.
+      // 3. Se NON conteneva b=1 lo aggiungeremo solo se poi rileviamo FHD (h=1) disponibile.
+  let hadBOriginally = false; // verrà deciso dopo aver rilevato canPlayFHD
+      try {
+        serverUrl = ensurePlaylistM3u8(serverUrl);
+        const urlObj = new URL(serverUrl);
+        const hadB = urlObj.searchParams.get('b') === '1';
+  hadBOriginally = hadB;
+        // Costruiamo intanto base senza token/expires (li aggiungiamo dopo per mantenere ordine desiderato: b, token, expires, h)
+        urlObj.search = '';
+        finalStreamUrl = urlObj.toString();
+        // nessuna aggiunta di b=1 se assente: hadBOriginally memorizza se presente all'origine
+      } catch (e) {
+        console.warn('[VixSrc][Direct] Fallback parsing serverUrl prima di token/expire:', (e as any)?.message || e);
+        finalStreamUrl = ensurePlaylistM3u8(serverUrl);
+  // hadBOriginally già valorizzato
+  hadBOriginally = /([?&])b=1(?!\d)/.test(serverUrl);
       }
-      else {
-        // fallback: controlla pattern alternativo (spazi, doppio apice, ecc.)
-        if (/window\.canPlayFHD\s*=\s*true/.test(scriptContent)) {
-          finalStreamUrl += "&h=1";
-          console.log('[VixSrc][Direct] FHD flag rilevato via regex fallback, aggiunto &h=1');
-        } else {
-          console.log('[VixSrc][Direct] FHD non disponibile (nessun canPlayFHD=true nel player script)');
-        }
+
+      // Detect FHD (canPlayFHD)
+      let fhd = false;
+      if (scriptContent.includes("window.canPlayFHD = true")) fhd = true; else if (/window\.canPlayFHD\s*=\s*true/.test(scriptContent)) fhd = true;
+      // Ora componiamo la query mantenendo ordine: (b=1 se applicabile), token, expires, (h=1 se FHD)
+      try {
+        const assembled = new URL(finalStreamUrl);
+        if (hadBOriginally) assembled.searchParams.set('b','1');
+        assembled.searchParams.set('token', token);
+        assembled.searchParams.set('expires', expires);
+        if (fhd) assembled.searchParams.set('h','1');
+        finalStreamUrl = assembled.toString();
+  console.log('[VixSrc][Direct] FHD', fhd, 'hadBOriginally', hadBOriginally);
+      } catch (e) {
+        console.warn('[VixSrc][Direct] Fallback composizione finale query:', (e as any)?.message || e);
+        const parts: string[] = [];
+  if (hadBOriginally) parts.push('b=1');
+        parts.push(`token=${token}`);
+        parts.push(`expires=${expires}`);
+        if (fhd) parts.push('h=1');
+        finalStreamUrl += (finalStreamUrl.includes('?') ? '&' : '?') + parts.join('&');
       }
 
       // --- Inizio della nuova logica per il titolo ---
@@ -749,7 +876,9 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
           const token = u.searchParams.get('token');
           const expires = u.searchParams.get('expires');
           const h = u.searchParams.get('h');
+          const b = u.searchParams.get('b'); // mantieni se presente
           u.search = '';
+          if (b) u.searchParams.set('b', b); // b prima per replicare ordine osservato (b,token,expires,h)
           if (token) u.searchParams.set('token', token);
           if (expires) u.searchParams.set('expires', expires);
           if (h) u.searchParams.set('h', h);
@@ -799,6 +928,7 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
   // -------------------------------------------------------------
 
   let directResult: VixCloudStreamInfo | null = null;
+  let directHadB = false; // se il master originale (direct) aveva b=1
   try {
     console.log('[VixSrc][EarlyDirect] Tentativo parse diretto iniziale');
     directResult = await getDirectStream(targetUrl, id, type, config);
@@ -810,8 +940,10 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
           const u = new URL(directResult.streamUrl);
           const token = u.searchParams.get('token');
           const expires = u.searchParams.get('expires');
-            const h = u.searchParams.get('h');
+          const h = u.searchParams.get('h');
+          const b = u.searchParams.get('b');
           u.search = '';
+          if (b) u.searchParams.set('b', b);
           if (token) u.searchParams.set('token', token);
           if (expires) u.searchParams.set('expires', expires);
           if (h) u.searchParams.set('h', h);
@@ -820,6 +952,12 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
             console.log('[VixSrc][Direct][FinalizeNormalize] URL direct ripulita =>', cleaned);
             directResult.streamUrl = cleaned;
           }
+        }
+      } catch {/* ignore */}
+      try {
+        if (directResult.streamUrl.includes('/playlist/')) {
+          const uTest = new URL(directResult.streamUrl);
+          if (uTest.searchParams.get('b') === '1') directHadB = true;
         }
       } catch {/* ignore */}
       streams.push(directResult);
@@ -845,15 +983,25 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
           if (dParam && /\/playlist\//.test(dParam)) {
             try {
               const inner = new URL(dParam);
+              if (directHadB && inner.searchParams.get('b') !== '1') inner.searchParams.set('b','1');
               const token = inner.searchParams.get('token');
               const expires = inner.searchParams.get('expires');
               const h = inner.searchParams.get('h');
               inner.search='';
+              if (directHadB) inner.searchParams.set('b','1');
               if (token) inner.searchParams.set('token', token);
               if (expires) inner.searchParams.set('expires', expires);
               if (h) inner.searchParams.set('h', h);
               const cleanedInner = inner.toString();
               if (cleanedInner !== dParam) { urlObj.searchParams.set('d', cleanedInner); proxyResult.streamUrl = urlObj.toString(); }
+            } catch {/* ignore */}
+          }
+          // Se non c'è parametro d ma l'URL proxy stesso è playlist e manca b=1, aggiungilo
+          if (directHadB && !dParam && /\/playlist\//.test(proxyResult.streamUrl)) {
+            try {
+              const pu = new URL(proxyResult.streamUrl);
+              if (pu.searchParams.get('b') !== '1') pu.searchParams.set('b','1');
+              proxyResult.streamUrl = pu.toString();
             } catch {/* ignore */}
           }
         } catch {/* ignore */}
@@ -873,7 +1021,51 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
   streams.sort((a,b)=> a.source === b.source ? 0 : (a.source==='direct'? -1:1));
 
   // Synthetic helpers (solo se addonBase valido e scenario richiede)
-  const usableAddonBase = (config.addonBase && !config.addonBase.includes(domains.vixsrc)) ? config.addonBase : '';
+  // Costruzione usableAddonBase con rilevamento automatico prioritario (come DLHD)
+  let usableAddonBase = '';
+  
+  // Tentativo 1: Rilevamento automatico dalla richiesta corrente (PRIORITÀ MASSIMA)
+  try {
+    const lastReq: any = (global as any).lastExpressRequest;
+    if (lastReq) {
+      const protocol = lastReq.protocol || 'https';
+      const host = lastReq.get('host') || lastReq.headers?.host || '';
+      if (host && !host.includes(domains.vixsrc)) {
+        usableAddonBase = `${protocol}://${host}`;
+        console.log(`[VixSrc] addonBase rilevato automaticamente: ${usableAddonBase}`);
+      } else if (host && host.includes(domains.vixsrc)) {
+        console.log(`[VixSrc] Host rilevato è dominio VixSrc stesso (${host}), skip per evitare loop`);
+      }
+    }
+  } catch (e) {
+    console.log(`[VixSrc] Errore rilevamento automatico addonBase:`, e);
+  }
+  
+  // Fallback 2: Variabile ambiente ADDON_BASE_URL
+  if (!usableAddonBase) {
+    const envBase = (process && process.env && process.env.ADDON_BASE_URL) ? String(process.env.ADDON_BASE_URL).trim() : '';
+    if (envBase && !envBase.includes(domains.vixsrc)) {
+      usableAddonBase = envBase;
+      console.log(`[VixSrc] addonBase da variabile ambiente: ${usableAddonBase}`);
+    } else if (envBase && envBase.includes(domains.vixsrc)) {
+      console.log(`[VixSrc] ADDON_BASE_URL è dominio VixSrc stesso, skip per evitare loop`);
+    }
+  }
+  
+  // Fallback 3: config.addonBase (runtime / landing page)
+  if (!usableAddonBase) {
+    if (config.addonBase && !config.addonBase.includes(domains.vixsrc)) {
+      usableAddonBase = config.addonBase;
+      console.log(`[VixSrc] addonBase da config runtime: ${usableAddonBase}`);
+    } else if (config.addonBase && config.addonBase.includes(domains.vixsrc)) {
+      console.log(`[VixSrc] config.addonBase è dominio VixSrc stesso, skip per evitare loop`);
+    }
+  }
+  
+  if (!usableAddonBase) {
+    console.log(`[VixSrc] Nessun usableAddonBase disponibile: synthetic FHD disabilitato`);
+  }
+  
   const haveMfp = !!(config.mfpUrl && config.mfpPsw && streams.some(s=>s.source==='proxy'));
   const haveDirect = streams.some(s=>s.source==='direct');
 
@@ -885,7 +1077,9 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
       const token = mu.searchParams.get('token');
       const expires = mu.searchParams.get('expires');
       const h = mu.searchParams.get('h');
+      const b = mu.searchParams.get('b');
       mu.search='';
+      if (directHadB || b === '1') mu.searchParams.set('b','1');
       if (token) mu.searchParams.set('token', token);
       if (expires) mu.searchParams.set('expires', expires);
       if (h) mu.searchParams.set('h', h);
@@ -908,7 +1102,15 @@ export async function getStreamContent(id: string, type: ContentType, config: Ex
   function buildSyntheticProxyWrapper(innerSynthetic: string, referer: string): VixCloudStreamInfo | null {
     if (!haveMfp || !config.vixDual || !config.mfpUrl || !config.mfpPsw) return null;
     const cleaned = config.mfpUrl.endsWith('/') ? config.mfpUrl.slice(0,-1) : config.mfpUrl;
-    const wrapper = `${cleaned}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(innerSynthetic)}&api_password=${encodeURIComponent(config.mfpPsw)}`;
+    let syntheticTarget = innerSynthetic;
+    try {
+      if (directHadB) {
+        const su = new URL(syntheticTarget);
+        if (su.searchParams.get('b') !== '1') su.searchParams.set('b','1');
+        syntheticTarget = su.toString();
+      }
+    } catch {/* ignore */}
+    const wrapper = `${cleaned}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(syntheticTarget)}&api_password=${encodeURIComponent(config.mfpPsw)}`;
     const proxyOrig = streams.find(s=>s.source==='proxy');
     const baseName = proxyOrig ? proxyOrig.name.replace(/\s*🔒FHD$/,'').replace(/\s*🔒$/,'') : 'Proxy';
     return { name: baseName + ' 🔒 FHD', streamUrl: wrapper, referer, source: 'proxy', isSyntheticFhd: true, originalName: baseName };

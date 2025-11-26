@@ -41,6 +41,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 
 import requests, socket, urllib.request, time
+from urllib.parse import urlparse
+from collections import Counter
 
 # ========================= UNIFIED COMBINED PLAYLIST SOURCES =========================
 # Ora esiste un unico file M3U che contiene sia canali (group-title contiene ITALY) che eventi live.
@@ -50,7 +52,7 @@ import requests, socket, urllib.request, time
 # Partizionamento:
 #   group-title contenente 'ITALY' (case-insensitive) => CANALE statico (aggiorniamo pdUrlF se esiste nel json)
 #   altrimenti => EVENTO per injection
-PRIMARY_COMBINED_URL = "https://world-proxifier.xyz/daddylive/playlist.m3u8"
+PRIMARY_COMBINED_URL = "https://world-proxifier.xyz/daddylive_go/playlist.m3u8"
 SECONDARY_COMBINED_URL = "https://raw.githubusercontent.com/pigzillaaa/daddylive/refs/heads/main/daddylive-channels-events.m3u8"
 
 # ---------------------------------------------------------------------------
@@ -210,7 +212,7 @@ def apply_pd_cache(dynamic_events: List[Dict[str, Any]], cache: dict, performed_
 # ---------------------------------------------------------------------------
 # Parsing M3U
 # ---------------------------------------------------------------------------
-EXTINF_RE = re.compile(r"^#EXTINF:-?1\s+([^,]*),(.*)$")
+EXTINF_RE = re.compile(r"^#EXTINF:-?1\s+([^,]*),(.*)$")  # group1 attrs, group2 display(+maybe url)
 # Attribute regex needed to include keys with hyphens (e.g., group-title)
 ATTR_RE = re.compile(r"([A-Za-z0-9_-]+)=\"(.*?)\"")
 
@@ -227,12 +229,20 @@ def parse_m3u(text: str) -> List[Dict[str, Any]]:
             m = EXTINF_RE.match(line)
             if m:
                 attr_blob = m.group(1)
-                display = m.group(2).strip()
+                display_full = m.group(2).strip()
                 attrs = {k: v for k, v in ATTR_RE.findall(attr_blob)}
                 url = None
-                if i + 1 < len(lines) and not lines[i+1].startswith('#'):
-                    url = lines[i+1].strip()
-                    i += 1
+                display = display_full
+                # Primary playlist embeds the URL at end of same line after many spaces
+                murl = re.search(r"(https?://\S+)$", display_full)
+                if murl:
+                    url = murl.group(1)
+                    display = display_full[:murl.start()].rstrip()
+                else:
+                    # Fallback classic format: URL on next non-# line
+                    if i + 1 < len(lines) and not lines[i+1].startswith('#'):
+                        url = lines[i+1].strip()
+                        i += 1
                 out.append({
                     'attrs': attrs,
                     'display': display,
@@ -339,7 +349,8 @@ def event_is_relax(name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Static channels update (pdUrlF)
 # ---------------------------------------------------------------------------
-ITALIAN_CHANNEL_NAME_RE = re.compile(r"\b(Rai ?[0-9A-Z]?|Rai ?[A-Z][a-z]+|Sky ?Sport ?[0-9A-Za-z]*|Sky ?Cinema ?[A-Za-z]*|Canale 5|Italia 1|Rete 4|Mediaset|Eurosport ?[12]?|DAZN ?[0-9]?|Dazn ?[0-9]?|Cine34|Top ?Crime|Motor Trend)\b", re.IGNORECASE)
+# Esteso per includere "Sky Uno" (playlist: Sky UNO Italy) e mantenere case-insensitive
+ITALIAN_CHANNEL_NAME_RE = re.compile(r"\b(Rai ?[0-9A-Z]?|Rai ?[A-Z][a-z]+|Sky ?Sport ?[0-9A-Za-z]*|Sky ?Cinema ?[A-Za-z]*|Sky ?Uno|Canale 5|Italia 1|Rete 4|Mediaset|Eurosport ?[12]?|DAZN ?[0-9]?|Dazn ?[0-9]?|Cine34|Top ?Crime|Motor Trend)\b", re.IGNORECASE)
 
 # Whitelist mapping per nomi playlist speciali che devono corrispondere a canali statici esistenti.
 # In particolare: "Sky Calcio 1 (251)" .. "Sky Calcio 1 (257)" -> "Sky Sport 251" .. "Sky Sport 257".
@@ -374,13 +385,32 @@ def update_static_channels(entries: List[Dict[str, Any]], tv_channels_path: Path
     attempted = 0
     italy_playlist_count = 0
     not_found_samples = []  # keep up to 15 samples of keys not found for diagnostics
-    # Detect if playlist actually exposes ITALY group (some variants may omit or use different casing)
-    has_italy_group = any(e['attrs'].get('group-title') == 'ITALY' for e in entries)
+    # Rileva se esiste almeno una variante di group-title contenente 'ITALY' (case-insensitive, anche con prefissi tipo '24/7| ITALY')
+    def _contains_italy(raw):
+        return bool(raw and 'ITALY' in raw.upper())
+    raw_group_titles = [e['attrs'].get('group-title') for e in entries]
+    has_italy_group = any(_contains_italy(gt) for gt in raw_group_titles)
+    non_standard_italy_variants = sorted({gt for gt in raw_group_titles if _contains_italy(gt) and gt != 'ITALY'})
+    if non_standard_italy_variants:
+        print(f"[PD][STATIC] Varianti group-title ITALY rilevate: {', '.join(non_standard_italy_variants)}")
+        # Tokenizzazione diagnostica dei group-title non standard per aiutare future normalizzazioni.
+        # Esempio: "24/7| ITALY" -> ["24/7", "ITALY"], "LIVE | Italy" -> ["LIVE", "Italy"]
+        token_map = {}
+        for gt in non_standard_italy_variants:
+            if not gt:
+                continue
+            tokens = [t.strip() for t in re.split(r"[|:/,>-]+", gt) if t and t.strip()]
+            if tokens:
+                token_map[gt] = tokens
+        if token_map:
+            formatted = "; ".join(f"{orig} -> [{', '.join(tok for tok in toks)}]" for orig, toks in token_map.items())
+            print(f"[PD][STATIC][GT] Tokenizzazione varianti: {formatted}")
     for e in entries:
         attrs = e['attrs']
-        gtitle = attrs.get('group-title')
+        gtitle = attrs.get('group-title') or ''
         if has_italy_group:
-            if gtitle != 'ITALY':
+            # Accetta qualsiasi group-title che contenga ITALY (ignore case) es. '24/7| ITALY'
+            if 'ITALY' not in gtitle.upper():
                 continue
         else:
             # Fallback heuristic: match by name tokens if group missing or different
@@ -402,6 +432,11 @@ def update_static_channels(entries: List[Dict[str, Any]], tv_channels_path: Path
                 # Log minimal debug once per match key (avoid flooding) -> print only in dry_run to surface mapping quickly
                 if dry_run:
                     print(f"[PD][MAP] Playlist '{disp}' mappato -> '{base_name}'")
+        # Normalizzazione variante estesa Sky Sport Max (Sky Sport Football Italy) -> Sky Sport Max
+        if re.match(r"(?i)^Sky\s+Sport\s+Max\s*\(Sky\s+Sport\s+Football.*\)$", base_name):
+            if dry_run:
+                print(f"[PD][MAP] Playlist '{disp}' mappato (football variant) -> 'Sky Sport Max'")
+            base_name = "Sky Sport Max"
         # Rimuove eventuale doppia occorrenza country
         base_name = re.sub(r"\s+Italy$", "", base_name, flags=re.IGNORECASE)
         # Riduci spazi
@@ -631,6 +666,34 @@ def inject_pd_streams(entries: List[Dict[str, Any]], playlist_entries: List[Dict
                 continue
             streams.insert(0, {'url': url, 'title': f'[P🐽D] {channel_label}'})
             injected += 1
+    
+    # === TENNIS MATCHING SPECIALE: eventi tennis generici (ATP/WTA/TENNIS) matchano con canali "Tennis" ===
+    for ev in entries:
+        ev_name = (ev.get('name') or '').upper()
+        # Verifica se evento tennis (contiene ATP, WTA, TENNIS, o tornei noti)
+        if not any(kw in ev_name for kw in ['ATP', 'WTA', 'TENNIS', 'ROLAND GARROS', 'WIMBLEDON', 'US OPEN', 'AUSTRALIAN OPEN']):
+            continue
+        # Cerca nella playlist canali con "TENNIS" nel nome
+        for pe in playlist_entries:
+            attrs = pe['attrs']
+            if 'ITALY' in (attrs.get('group-title') or '').upper():
+                continue  # Skip canali statici
+            display = pe['display']
+            channel_label = extract_channel_label_from_display(display) or ''
+            if not channel_label or 'TENNIS' not in channel_label.upper():
+                continue  # Solo canali Tennis
+            if not is_allowed_broadcaster(channel_label):
+                continue  # Solo broadcaster whitelisted
+            url = pe.get('url')
+            if not url:
+                continue
+            streams = ev.setdefault('streams', [])
+            # Evita duplicati
+            if any(s for s in streams if isinstance(s, dict) and s.get('url') == url):
+                continue
+            streams.insert(0, {'url': url, 'title': f'[P🐽D] {channel_label}'})
+            injected += 1
+            print(f"[PD][TENNIS] Matched tennis event '{ev.get('name')}' with playlist '{channel_label}'")
 
     print(f"[PD] Dynamic events injected streams: {injected} (candidates matched: {candidate_events}, allowed broadcaster sports: {allowed_broadcaster_events}){' (dry-run only)' if dry_run else ''}")
     if injected == 0:
@@ -665,8 +728,8 @@ def run_post_live(dynamic_path: str | Path, tv_channels_path: str | Path, dry_ru
         attempts = 3
         last_err = None
         headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; PDFetcher/1.0)',
-            'Accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            'Accept': 'application/vnd.apple.mpegurl,text/plain,*/*;q=0.8',
             'Pragma': 'no-cache',
             'Cache-Control': 'no-cache'
         }
@@ -702,14 +765,17 @@ def run_post_live(dynamic_path: str | Path, tv_channels_path: str | Path, dry_ru
         pass
     print(f"[PD][HTTP] GET combined playlist (primary): {PRIMARY_COMBINED_URL}")
     combined_raw = _fetch(PRIMARY_COMBINED_URL, 'PRIMARY')
+    playlist_source = 'PRIMARY'
     if not combined_raw:
         print(f"[PD][HTTP][FALLBACK] trying combined secondary: {SECONDARY_COMBINED_URL}")
         try:
-            host_s = urllib.request.urlparse(SECONDARY_COMBINED_URL).hostname
+            host_s = urlparse(SECONDARY_COMBINED_URL).hostname
             if host_s: _dns_log(host_s, 'SECONDARY')
         except Exception:
             pass
         combined_raw = _fetch(SECONDARY_COMBINED_URL, 'SECONDARY')
+        if combined_raw:
+            playlist_source = 'SECONDARY'
 
     channels_entries: List[Dict[str, Any]] = []
     events_entries: List[Dict[str, Any]] = []
@@ -721,7 +787,19 @@ def run_post_live(dynamic_path: str | Path, tv_channels_path: str | Path, dry_ru
                 channels_entries.append(e)
             else:
                 events_entries.append(e)
-        print(f"[PD][PARSE] combined entries={len(all_entries)} channels={len(channels_entries)} events={len(events_entries)}")
+        # Distribution of stream hosts for diagnostics (only channels, which feed pdUrlF)
+        host_counter = Counter()
+        for ce in channels_entries:
+            u = ce.get('url') or ''
+            if u:
+                try:
+                    h = urlparse(u).hostname or ''
+                except Exception:
+                    h = ''
+                if h:
+                    host_counter[h] += 1
+        top_hosts = ', '.join(f"{h}={c}" for h,c in host_counter.most_common(5)) if host_counter else 'none'
+        print(f"[PD][PARSE] source={playlist_source} combined entries={len(all_entries)} channels={len(channels_entries)} events={len(events_entries)} hosts[{top_hosts}]")
     else:
         print("[PD][ERR] Combined playlist fetch failed (primary + secondary)")
 

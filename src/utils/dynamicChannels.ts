@@ -1,4 +1,4 @@
-// Dynamic channels utility (Node.js CommonJS style to avoid missing type declarations)
+// Dynamic channels utility (Node.js CommonJS style to avoid missing type declarations) 
 // If using TypeScript with proper @types/node, you can switch to import syntax.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 // Basic declarations to satisfy TS if @types/node absent
@@ -169,43 +169,82 @@ export function loadDynamicChannels(force = false): DynamicChannel[] {
   } catch {}
   if (!force && dynamicCache && (now - lastLoad) < CACHE_TTL) return dynamicCache;
   try {
-    if (!fs.existsSync(DYNAMIC_FILE)) {
-      dynamicCache = [];
-      lastLoad = now;
-      return [];
-    }
-    const raw = fs.readFileSync(DYNAMIC_FILE, 'utf-8');
-    // Se file vuoto o quasi sicuramente in stato "troncato" da write non atomica, tenta recovery senza azzerare la cache precedente
-    if (raw.trim().length < 2) {
-      try { console.warn('[DynamicChannels] WARNING: file dinamico vuoto o troncato (<2 bytes), mantengo cache precedente se disponibile'); } catch {}
-      if (dynamicCache) return dynamicCache; // mantieni precedente
-      dynamicCache = [];
-      lastLoad = now;
-      return [];
-    }
-    let data: any;
-    try {
-      data = JSON.parse(raw);
-    } catch (perr) {
-      // Retry una volta dopo breve sleep sincrono (busy wait minimo) in caso di race (writer ancora in corso)
-      try {
-        const start = Date.now();
-        while (Date.now() - start < 25) {/* piccolo delay */}
-        const raw2 = fs.readFileSync(DYNAMIC_FILE, 'utf-8');
-        if (raw2.trim().length >= 2) {
-          data = JSON.parse(raw2);
-        } else {
-          throw perr;
+    // Carica dynamic_channels.json (Live.py, RM, Amstaff)
+    let mainData: any[] = [];
+    if (fs.existsSync(DYNAMIC_FILE)) {
+      const raw = fs.readFileSync(DYNAMIC_FILE, 'utf-8');
+      // Se file vuoto o quasi sicuramente in stato "troncato" da write non atomica, tenta recovery senza azzerare la cache precedente
+      if (raw.trim().length < 2) {
+        try { console.warn('[DynamicChannels] WARNING: file dinamico vuoto o troncato (<2 bytes), mantengo cache precedente se disponibile'); } catch {}
+        if (dynamicCache) return dynamicCache; // mantieni precedente
+        mainData = [];
+      } else {
+        let data: any;
+        try {
+          data = JSON.parse(raw);
+        } catch (perr) {
+          // Retry una volta dopo breve sleep sincrono (busy wait minimo) in caso di race (writer ancora in corso)
+          try {
+            const start = Date.now();
+            while (Date.now() - start < 25) {/* piccolo delay */}
+            const raw2 = fs.readFileSync(DYNAMIC_FILE, 'utf-8');
+            if (raw2.trim().length >= 2) {
+              data = JSON.parse(raw2);
+            } else {
+              throw perr;
+            }
+          } catch (retryErr) {
+            try { console.error('[DynamicChannels] Parse JSON fallita (anche dopo retry). Mantengo cache precedente.', (retryErr as any)?.message || retryErr); } catch {}
+            if (dynamicCache) return dynamicCache;
+            data = [];
+          }
         }
-      } catch (retryErr) {
-        try { console.error('[DynamicChannels] Parse JSON fallita (anche dopo retry). Mantengo cache precedente.', (retryErr as any)?.message || retryErr); } catch {}
-        if (dynamicCache) return dynamicCache;
-        dynamicCache = [];
-        lastLoad = now;
-        return [];
+        if (Array.isArray(data)) {
+          mainData = data;
+        }
       }
     }
-    if (!Array.isArray(data)) {
+    
+    // Carica thisnot_channels.json (ThisNot separato)
+    let thisnotData: any[] = [];
+    const THISNOT_FILE = '/tmp/thisnot_channels.json';
+    if (fs.existsSync(THISNOT_FILE)) {
+      try {
+        const thisnotRaw = fs.readFileSync(THISNOT_FILE, 'utf-8');
+        if (thisnotRaw.trim().length >= 2) {
+          const thisnotParsed = JSON.parse(thisnotRaw);
+          if (Array.isArray(thisnotParsed)) {
+            thisnotData = thisnotParsed;
+            try { console.log(`[DynamicChannels] 🔗 Mergiati ${thisnotData.length} canali ThisNot da ${THISNOT_FILE}`); } catch {}
+          }
+        }
+      } catch (thisnotErr) {
+        try { console.warn('[DynamicChannels] Errore caricamento ThisNot file, skip:', (thisnotErr as any)?.message); } catch {}
+      }
+    }
+
+    // Carica ppv_channels.json (PPV separato)
+    let ppvData: any[] = [];
+    const PPV_FILE = '/tmp/ppv_channels.json';
+    if (fs.existsSync(PPV_FILE)) {
+      try {
+        const ppvRaw = fs.readFileSync(PPV_FILE, 'utf-8');
+        if (ppvRaw.trim().length >= 2) {
+          const ppvParsed = JSON.parse(ppvRaw);
+          if (Array.isArray(ppvParsed)) {
+            ppvData = ppvParsed;
+            try { console.log(`[DynamicChannels] 🔗 Mergiati ${ppvData.length} canali PPV da ${PPV_FILE}`); } catch {}
+          }
+        }
+      } catch (ppvErr) {
+        try { console.warn('[DynamicChannels] Errore caricamento PPV file, skip:', (ppvErr as any)?.message); } catch {}
+      }
+    }
+    
+    // Mergia i tre array
+    const data = [...mainData, ...thisnotData, ...ppvData];
+    
+    if (data.length === 0) {
       dynamicCache = [];
       lastLoad = now;
       return [];
@@ -286,6 +325,12 @@ export function loadDynamicChannels(force = false): DynamicChannel[] {
       let removedPrevDay = 0;
       let removedExpiredAge = 0;
       const filtered: DynamicChannel[] = data.filter(ch => {
+        // THISNOT: mantieni SEMPRE tutti i canali ThisNot senza filtri temporali
+        const category = (ch.category || '').toString().toLowerCase();
+        if (category === 'thisnot') {
+          return true; // Skip tutti i filtri temporali per ThisNot
+        }
+        
         if (!ch.eventStart) return true; // keep if undated
         const chDate = datePartRome(ch.eventStart);
         if (!chDate) return true;
