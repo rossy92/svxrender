@@ -181,6 +181,34 @@ const exactMap: Record<string, string> = {
 
       "Nichijou - My Ordinary Life": "Nichijou",
 
+      "Case Closed Movie 01: The Time Bombed Skyscraper": "Detective Conan Movie 01: Fino alla fine del tempo",
+      "My Hero Academia Final Season": "Boku no Hero Academia: Final Season",
+
+
+
+
+
+
+      "Jujutsu Kaisen: The Culling Game Part 1": "Jujutsu Kaisen 3: The Culling Game Part 1",
+
+
+
+
+
+
+      "Hell's Paradise Season 2": "Hell's Paradise 2",
+
+
+
+
+
+
+
+      "[Oshi no Ko]": "Oshi no Ko",
+
+
+
+
 
 
 

@@ -1,5 +1,210 @@
 # Changelog
 
+## [1.16.0](https://github.com/qwertyuiop8899/streamvix/compare/v1.15.3...v1.16.0) (2026-01-26)
+
+
+### Features
+
+* **normalize:** add "Magical Circle" ([67aee92](https://github.com/qwertyuiop8899/streamvix/commit/67aee92a45fce940b927ecad30e5c545630729a2))
+
+## [1.15.3](https://github.com/qwertyuiop8899/streamvix/compare/v1.15.2...v1.15.3) (2026-01-25)
+
+
+### Bug Fixes
+
+* vavoo default ([7793112](https://github.com/qwertyuiop8899/streamvix/commit/77931120ace2af5b155ab1bd2db1fdae947e3de4))
+* vavoo worker ([abacec6](https://github.com/qwertyuiop8899/streamvix/commit/abacec630ee0595c688a7545a0c1432ef7b7edd2))
+
+## [1.15.2](https://github.com/qwertyuiop8899/streamvix/compare/v1.15.1...v1.15.2) (2026-01-25)
+
+
+### Bug Fixes
+
+* token ([08e41f1](https://github.com/qwertyuiop8899/streamvix/commit/08e41f124ad2568ed74f2a315961f5b39446fefa))
+
+## [1.15.1](https://github.com/qwertyuiop8899/streamvix/compare/v1.15.0...v1.15.1) (2026-01-25)
+
+
+### Bug Fixes
+
+* vavoo with proxy ([1229d9d](https://github.com/qwertyuiop8899/streamvix/commit/1229d9dd1e6925b84a13384e5972d565fcf00fde))
+
+## [1.15.0](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.13...v1.15.0) (2026-01-25)
+
+
+### Features
+
+* **normalize-au:** add "[Oshi No Ko] Season 3" ([0a7a739](https://github.com/qwertyuiop8899/streamvix/commit/0a7a739a70e58c5d0aa49c837866a191a4781c84))
+* **normalize-aw:** add "[Oshi no Ko]" ([2491644](https://github.com/qwertyuiop8899/streamvix/commit/24916449ff01d6cbfd9153de269f66fc5744c740))
+* **normalize:** add "Record of Ragnarok II Part 2" ([84787bc](https://github.com/qwertyuiop8899/streamvix/commit/84787bc9ccd0cf55bebeb8cf4092fac1d54feb14))
+* **normalize:** add "Record of Ragnarok II" ([edbde87](https://github.com/qwertyuiop8899/streamvix/commit/edbde8706081b0ebd8fb8f1fa9ebad7b8291bb2a))
+
+## [1.14.13](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.12...v1.14.13) (2026-01-22)
+
+
+### Bug Fixes
+
+* tdn ([7cf481d](https://github.com/qwertyuiop8899/streamvix/commit/7cf481dfc64eb41405bdeab6eb5573b682c3d6ed))
+
+## [1.14.12](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.11...v1.14.12) (2026-01-21)
+
+
+### Bug Fixes
+
+* addon boolean and validate for stremio addon ([f3fef92](https://github.com/qwertyuiop8899/streamvix/commit/f3fef92de5f4c9b891cc14f190d1e0ba044d96b1))
+* domains update ([9dd1def](https://github.com/qwertyuiop8899/streamvix/commit/9dd1defe855c1467f5f785f3b985ff889462cecc))
+* landingPage.ts ([6100139](https://github.com/qwertyuiop8899/streamvix/commit/610013994134c4ee530e3e988adbbe6c60d1e6e0))
+
+## [1.14.11](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.10...v1.14.11) (2026-01-18)
+
+
+### Bug Fixes
+
+* addon ([abf5547](https://github.com/qwertyuiop8899/streamvix/commit/abf5547d3a9f3ebdd0b272e31aa25ef5d1db5ae5))
+* z eventi ([d983d95](https://github.com/qwertyuiop8899/streamvix/commit/d983d9543cc2d1eecb8cfc30dbe9d0f272490a68))
+
+## [1.14.10](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.9...v1.14.10) (2026-01-17)
+
+
+### Bug Fixes
+
+* boh ([52aca2e](https://github.com/qwertyuiop8899/streamvix/commit/52aca2e3270270e5bb9d21c5c5925b7dddf5030b))
+* domains update ([8e8a3e2](https://github.com/qwertyuiop8899/streamvix/commit/8e8a3e2d758ce97fa37a15f5cc40c49b9c647eab))
+
+## [1.14.9](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.8...v1.14.9) (2026-01-17)
+
+
+### Bug Fixes
+
+* packagejson missing dist provide ([21dd852](https://github.com/qwertyuiop8899/streamvix/commit/21dd852e12917e6630a0b415f5dcc188530b0c2d))
+
+## [1.14.8](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.7...v1.14.8) (2026-01-17)
+
+
+### Bug Fixes
+
+* bump version ([7f7d72a](https://github.com/qwertyuiop8899/streamvix/commit/7f7d72a122b09a0eaf8e56ee0b9a1ae3e516e585))
+* bump version ([eaebb7d](https://github.com/qwertyuiop8899/streamvix/commit/eaebb7d3fae99996afb2d0a10abe197e1453235c))
+
+## [1.14.7](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.6...v1.14.7) (2026-01-17)
+
+
+### Bug Fixes
+
+* sports99 ([c888643](https://github.com/qwertyuiop8899/streamvix/commit/c8886435bad278e72be7f443efbd60554a25ced3))
+
+## [1.14.6](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.5...v1.14.6) (2026-01-16)
+
+
+### Bug Fixes
+
+* sports99 ([f552fdb](https://github.com/qwertyuiop8899/streamvix/commit/f552fdbfb53fc2c4c8b4addd94507886e2207f91))
+
+## [1.14.5](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.4...v1.14.5) (2026-01-16)
+
+
+### Bug Fixes
+
+* time sportzx ([63ac89c](https://github.com/qwertyuiop8899/streamvix/commit/63ac89c5e59898d22a46e5043adc01eee4c3022f))
+
+## [1.14.4](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.3...v1.14.4) (2026-01-16)
+
+
+### Bug Fixes
+
+* hide dvr ([0eb92da](https://github.com/qwertyuiop8899/streamvix/commit/0eb92da656799cbf43b91ea4239b40c8d4d5608e))
+
+## [1.14.3](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.2...v1.14.3) (2026-01-16)
+
+
+### Bug Fixes
+
+* add sportextrac ([14dd0ef](https://github.com/qwertyuiop8899/streamvix/commit/14dd0ef8082f84a5a7c1b30f1d27a33e6b32902d))
+* add sportzxUpdater.ts ([c0efb23](https://github.com/qwertyuiop8899/streamvix/commit/c0efb233431b419a16410e181e150da6186a6868))
+* addon sportzx ([e0ede1a](https://github.com/qwertyuiop8899/streamvix/commit/e0ede1aa1bea1612a79576fa3bb68f85a8584602))
+* dvr button ([e74e36f](https://github.com/qwertyuiop8899/streamvix/commit/e74e36fc32861371cadd7aa844262f817db942e1))
+
+## [1.14.2](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.1...v1.14.2) (2026-01-16)
+
+
+### Bug Fixes
+
+* dvr ([26a4737](https://github.com/qwertyuiop8899/streamvix/commit/26a4737fb6c11da8a2ac234c025d0acc2bdeeb52))
+
+## [1.14.1](https://github.com/qwertyuiop8899/streamvix/compare/v1.14.0...v1.14.1) (2026-01-16)
+
+
+### Bug Fixes
+
+* proxy ([6b868b9](https://github.com/qwertyuiop8899/streamvix/commit/6b868b9a6c277cd48b37caf10b2a3c239014c186))
+
+## [1.14.0](https://github.com/qwertyuiop8899/streamvix/compare/v1.13.0...v1.14.0) (2026-01-14)
+
+
+### Features
+
+* **normalize-aw:** add "Hell's Paradise Season 2" ([c0bd65a](https://github.com/qwertyuiop8899/streamvix/commit/c0bd65ac9e1c5c7209ad372dbfa6ae6e986a6af4))
+* **normalize:** add "Hell's Paradise Season 2" ([80fa29f](https://github.com/qwertyuiop8899/streamvix/commit/80fa29f0865176977b21ce9276a09f5d28e4fa71))
+
+
+### Bug Fixes
+
+* vix ([f77fbc6](https://github.com/qwertyuiop8899/streamvix/commit/f77fbc6f265e8c78caf4286728e9a2d8d0107383))
+
+## [1.13.0](https://github.com/qwertyuiop8899/streamvix/compare/v1.12.3...v1.13.0) (2026-01-13)
+
+
+### Features
+
+* **normalize-au:** add "Jujutsu Kaisen: The Culling Game Part 1" ([f95d415](https://github.com/qwertyuiop8899/streamvix/commit/f95d4152a0e37bc9332cafcd719c33827819b1f9))
+* **normalize-au:** add "My Hero Academia Final Season" ([19144e5](https://github.com/qwertyuiop8899/streamvix/commit/19144e5d6d1bced84c9ace1439747ca553090dd5))
+* **normalize-aw:** add "Case Closed Movie 01: The Time Bombed Skyscraper" ([a29a7b2](https://github.com/qwertyuiop8899/streamvix/commit/a29a7b22cbd62c9d88075a3c10fa5bee8792503c))
+* **normalize-aw:** add "Jujutsu Kaisen: The Culling Game Part 1" ([9791609](https://github.com/qwertyuiop8899/streamvix/commit/9791609dcf712978f54ecab2af8a4f7c812d231b))
+* **normalize-aw:** add "My Hero Academia Final Season" ([08033cd](https://github.com/qwertyuiop8899/streamvix/commit/08033cdc0178b5a5d18ec5fd13d3bbe53b4cf80a))
+* **normalize:** add "Case Closed Movie 01: The Time Bombed Skyscraper" ([d3ffb91](https://github.com/qwertyuiop8899/streamvix/commit/d3ffb91773d18885a00f3407d9cb5847da270af7))
+* **normalize:** add "Jujutsu Kaisen: The Culling Game Part 1" ([4c34b2b](https://github.com/qwertyuiop8899/streamvix/commit/4c34b2b15c4482a8d2d0b8009684d95d8fbd4aa6))
+* **normalize:** add "My Hero Academia Final Season" ([df3a36f](https://github.com/qwertyuiop8899/streamvix/commit/df3a36f5d03891229d06ac4224d59bde03e54097))
+
+
+### Bug Fixes
+
+* toonvoe ([6220243](https://github.com/qwertyuiop8899/streamvix/commit/62202436725d65d2163ca5843041d8cc4fe8a098))
+
+## [1.13.0](https://github.com/qwertyuiop8899/streamvix/compare/v1.12.3...v1.13.0) (2026-01-13)
+
+
+### Features
+
+* **normalize-au:** add "Jujutsu Kaisen: The Culling Game Part 1" ([f95d415](https://github.com/qwertyuiop8899/streamvix/commit/f95d4152a0e37bc9332cafcd719c33827819b1f9))
+* **normalize-au:** add "My Hero Academia Final Season" ([19144e5](https://github.com/qwertyuiop8899/streamvix/commit/19144e5d6d1bced84c9ace1439747ca553090dd5))
+* **normalize-aw:** add "Case Closed Movie 01: The Time Bombed Skyscraper" ([a29a7b2](https://github.com/qwertyuiop8899/streamvix/commit/a29a7b22cbd62c9d88075a3c10fa5bee8792503c))
+* **normalize-aw:** add "Jujutsu Kaisen: The Culling Game Part 1" ([9791609](https://github.com/qwertyuiop8899/streamvix/commit/9791609dcf712978f54ecab2af8a4f7c812d231b))
+* **normalize-aw:** add "My Hero Academia Final Season" ([08033cd](https://github.com/qwertyuiop8899/streamvix/commit/08033cdc0178b5a5d18ec5fd13d3bbe53b4cf80a))
+* **normalize:** add "Case Closed Movie 01: The Time Bombed Skyscraper" ([d3ffb91](https://github.com/qwertyuiop8899/streamvix/commit/d3ffb91773d18885a00f3407d9cb5847da270af7))
+* **normalize:** add "Jujutsu Kaisen: The Culling Game Part 1" ([4c34b2b](https://github.com/qwertyuiop8899/streamvix/commit/4c34b2b15c4482a8d2d0b8009684d95d8fbd4aa6))
+* **normalize:** add "My Hero Academia Final Season" ([df3a36f](https://github.com/qwertyuiop8899/streamvix/commit/df3a36f5d03891229d06ac4224d59bde03e54097))
+
+
+### Bug Fixes
+
+* toonvoe ([6220243](https://github.com/qwertyuiop8899/streamvix/commit/62202436725d65d2163ca5843041d8cc4fe8a098))
+
+## [1.12.3](https://github.com/qwertyuiop8899/streamvix/compare/v1.12.2...v1.12.3) (2026-01-09)
+
+
+### Bug Fixes
+
+* domains update ([91aa77f](https://github.com/qwertyuiop8899/streamvix/commit/91aa77f243cf560995482faf040783a099ed5e63))
+* rm ([0e81475](https://github.com/qwertyuiop8899/streamvix/commit/0e81475714de005e8af3ab353d026c403eb55216))
+
+## [1.12.2](https://github.com/qwertyuiop8899/streamvix/compare/v1.12.1...v1.12.2) (2026-01-09)
+
+
+### Bug Fixes
+
+* b64 express ([deb38ba](https://github.com/qwertyuiop8899/streamvix/commit/deb38baa294e0d1032dfc00b5d3a782c4c462c15))
+* xpress b64 ([48d236c](https://github.com/qwertyuiop8899/streamvix/commit/48d236ce9981d6b63afebe932c86dc1eb14f327b))
+
 ## [1.12.1](https://github.com/qwertyuiop8899/streamvix/compare/v1.12.0...v1.12.1) (2026-01-09)
 
 

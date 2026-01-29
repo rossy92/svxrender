@@ -354,7 +354,7 @@ function landingTemplate(manifest: any) {
 					// For inverted toggles (disable*), show ON when default=false (i.e., feature enabled)
 					let isChecked = hasDefault ? (t.invert ? !((elem as any).default as boolean) : !!(elem as any).default) : true;
 					// Force Eurostreaming & Loonex OFF by default (unless explicit default true)
-					if ((key === 'eurostreamingEnabled' || key === 'loonexEnabled' || key === 'vavooNoMfpEnabled') && !hasDefault) isChecked = false;
+					if ((key === 'eurostreamingEnabled' || key === 'loonexEnabled') && !hasDefault) isChecked = false;
 					const checkedAttr = isChecked ? ' checked' : '';
 					const extraAttr = key === 'mediaflowMaster' ? ' data-master-mfp="1"' : '';
 					const extraAttrTmdb = key === 'personalTmdbKey' ? ' data-personal-tmdb="1"' : '';
@@ -479,8 +479,15 @@ function landingTemplate(manifest: any) {
 				var updateLink = function() {
 					var config = buildConfigFromForm();
 					var configStr = JSON.stringify(config);
-					// Always use Base64 encoding for manifest URL
-					var encodedConfig = btoa(configStr);
+					// Use Base64 encoding if config contains slashes (to avoid %2F blocking by Hayd.uk)
+					var encodedConfig;
+					if (configStr.includes('/')) {
+						// Base64 encode to avoid %2F in URL
+						encodedConfig = btoa(configStr);
+					} else {
+						// Use URL encoding for shorter URLs when no slashes present
+						encodedConfig = encodeURIComponent(configStr);
+					}
 					installLink.setAttribute('href', 'stremio://' + window.location.host + '/' + encodedConfig + '/manifest.json');
 
 				};
@@ -943,8 +950,13 @@ function landingTemplate(manifest: any) {
 				if (mainForm) {
 					var config = window.buildConfigFromForm ? window.buildConfigFromForm() : {};
 					var configStr = JSON.stringify(config);
-					// Always use Base64 encoding for manifest URL
-					var encodedConfig = btoa(configStr);
+					// Use Base64 encoding if config contains slashes (to avoid %2F blocking by Hayd.uk)
+					var encodedConfig;
+					if (configStr.includes('/')) {
+						encodedConfig = btoa(configStr);
+					} else {
+						encodedConfig = encodeURIComponent(configStr);
+					}
 					manifestUrl = window.location.protocol + '//' + window.location.host + '/' + encodedConfig + '/manifest.json';
 				} else {
 					manifestUrl = window.location.protocol + '//' + window.location.host + '/manifest.json';

@@ -38,12 +38,16 @@ import { startRmScheduler, updateRmChannels } from './utils/rmUpdater';
 // ThisNot updater
 // ThisNot updater
 import { startThisNotUpdater, updateThisNotChannels } from './utils/thisnotChannels';
+import { startSportzxScheduler, getSportzxChannels } from './utils/sportzxUpdater';
+import { startSports99Scheduler, getSports99Channels } from './utils/sports99Updater';
 // import { startMpdzScheduler, updateMpdzChannels } from './utils/mpdzUpdater';
 import { startMpdxScheduler, updateMpdxChannels } from './utils/mpdxUpdater';
 // import { startZEventiScheduler, updateZEventiChannels } from './utils/zEventiUpdater';
 import { getGuardoserieStreams } from './providers/guardoserie';
 import { getGuardaflixStreams } from './providers/guardaflix';
 import { getTrailerStreams, isTrailerProviderAvailable } from './providers/trailerProvider';
+// EasyProxy DVR integration
+import { getDvrStreamsForChannel, getDvrConfig, buildDvrRecordEntry } from './utils/easyproxyDvr';
 
 // ================= TYPES & INTERFACES =================
 interface AddonConfig {
@@ -66,6 +70,8 @@ interface AddonConfig {
     disableVixsrc?: boolean;
     tvtapProxyEnabled?: boolean;
     vavooNoMfpEnabled?: boolean;
+    // DVR setting (uses mediaFlowProxyUrl for EasyProxy)
+    dvrEnabled?: boolean;
 }
 
 function debugLog(...args: any[]) { try { console.log('[DEBUG]', ...args); } catch { } }
@@ -94,6 +100,7 @@ const VAVOO_FORCE_SERVER_IP: boolean = (() => {
 })();
 const VAVOO_SET_IPLOCATION_ONLY: boolean = (() => { try { const v = (process?.env?.VAVOO_SET_IPLOCATION_ONLY || '').toLowerCase(); if (!v) return true; return !(v === '0' || v === 'false' || v === 'off'); } catch { return false; } })();
 const VAVOO_LOG_SIG_FULL: boolean = (() => { try { const v = (process?.env?.VAVOO_LOG_SIG_FULL || '').toLowerCase(); if (['0', 'false', 'off'].includes(v)) return false; if (['1', 'true', 'on'].includes(v)) return true; return true; } catch { return true; } })();
+const VAVOO_WORKER_URLS = (process.env.VAVOO_WORKER_URL || '').split(',').map((u: string) => u.trim()).filter(Boolean);
 function maskSig(sig: string, keepStart = 12, keepEnd = 6): string { try { if (!sig) return ''; const len = sig.length; const head = sig.slice(0, Math.min(keepStart, len)); const tail = len > keepStart ? sig.slice(Math.max(len - keepEnd, keepStart)) : ''; const hidden = Math.max(0, len - head.length - tail.length); const mask = hidden > 0 ? '*'.repeat(Math.min(hidden, 32)) + (hidden > 32 ? `(+${hidden - 32})` : '') : ''; return `${head}${mask}${tail}`; } catch { return ''; } }
 
 function getClientIpFromReq(req: any): string | null {
@@ -200,15 +207,45 @@ async function resolveVavooCleanUrl(vavooPlayUrl: string, clientIp: string | nul
             vdbg('Ping timeout -> aborting request');
             controller.abort();
         }, 12000);
+        if (VAVOO_WORKER_URLS.length > 0) {
+            try {
+                const selectedWorker = VAVOO_WORKER_URLS[Math.floor(Math.random() * VAVOO_WORKER_URLS.length)];
+                vdbg('Resolving via Cloudflare Worker...', { worker: selectedWorker, url: (vavooPlayUrl || '').substring(0, 80) });
+                const workerReqUrl = `${selectedWorker.replace(/\/$/, '')}/manifest.m3u8?url=${encodeURIComponent(vavooPlayUrl)}`;
+                const workerHeaders: Record<string, string> = {};
+                if (clientIp) workerHeaders['X-Forwarded-For'] = clientIp;
+
+                const workerRes = await fetch(workerReqUrl, {
+                    method: 'GET',
+                    headers: workerHeaders,
+                    redirect: 'manual'
+                } as any);
+
+                let resolvedUrl: string | null = null;
+                if (workerRes.status === 302 || workerRes.status === 301) {
+                    resolvedUrl = workerRes.headers.get('Location');
+                } else if (workerRes.ok) {
+                    const j: any = await workerRes.json().catch(() => ({}));
+                    resolvedUrl = j.url || null;
+                }
+
+                if (resolvedUrl) {
+                    vdbg('Worker resolve SUCCESS', { resolved: resolvedUrl.substring(0, 100), worker: selectedWorker });
+                    return { url: resolvedUrl, headers: { 'User-Agent': DEFAULT_VAVOO_UA, 'Referer': 'https://vavoo.to/' } };
+                }
+                vdbg('Worker resolve failed to return URL', { status: workerRes.status, worker: selectedWorker });
+            } catch (e) {
+                vdbg('Worker resolve EXCEPTION', (e as any)?.message);
+            }
+            vdbg('Worker failed or not working, falling back to internal resolution...');
+        }
+
         const pingBody = {
-            token: 'tosFwQCJMS8qrW_AjLoHPQ41646J5dRNha6ZWHnijoYQQQoADQoXYSo7ki7O5-CsgN4CH0uRk6EEoJ0728ar9scCRQW3ZkbfrPfeCXW2VgopSW2FWDqPOoVYIuVPAOnXCZ5g',
+            token: '',
             reason: 'app-blur',
             locale: 'de',
             theme: 'dark',
             metadata: {
-                device: { type: 'Handset', brand: 'google', model: 'Pixel', name: 'sdk_gphone64_arm64', uniqueId: 'd10e5d99ab665233' },
-                os: { name: 'android', version: '13', abis: ['arm64-v8a', 'armeabi-v7a', 'armeabi'], host: 'android' },
-                app: { platform: 'android', version: '3.1.21', buildId: '289515000', engine: 'hbc85', signatures: ['6e8a975e3cbf07d5de823a760d4c2547f86c1403105020adee5de67ac510999e'], installer: 'app.revanced.manager.flutter' },
                 version: { package: 'tv.vavoo.app', binary: '3.1.21', js: '3.1.21' }
             },
             ipLocation: (clientIp && (!VAVOO_FORCE_SERVER_IP || VAVOO_SET_IPLOCATION_ONLY)) ? clientIp : '',
@@ -507,8 +544,14 @@ function getStreamPriority(stream: { url: string; title: string }): number {
     // 8. GDplayer
     if (/\[🌐Gd\]|\bGd\b|gdplayer/i.test(title)) return 8;
 
-    // 10. SPON
-    if (/\[?SPON\]?/i.test(title)) return 10;
+    // 9.5. SPON
+    if (/\[?SPON\]?/i.test(title)) return 9.5;
+
+    // 9.8. SportzX [SPZX]
+    if (/\[SPZX\]/i.test(title)) return 9.8;
+
+    // 9.9. Sports99 [SP99]
+    if (/\[SP99\]/i.test(title)) return 9.9;
 
     // 13. Altri daddy FAST dynamic (estratti ma non italiani, non leftover)
     if (!/\[Player Esterno\]/i.test(title) && /dlhd\.dad|mfp.*dlhd/i.test(url)) return 13;
@@ -528,11 +571,41 @@ function sortStreamsByPriority(streams: { url?: string; title?: string }[]): voi
     streams.sort((a, b) => {
         const streamA = { url: a.url || '', title: a.title || '' };
         const streamB = { url: b.url || '', title: b.title || '' };
-        const prioA = getStreamPriority(streamA);
-        const prioB = getStreamPriority(streamB);
+
+        // DVR category: -2 = active recording, -1 = completed, 0 = live, 1 = record entry
+        const getDvrCategory = (title: string): number => {
+            if (title.includes('Recording...') || title.includes('Stop & Watch')) return -2;
+            if (title.includes('[DVR]') && !title.includes('REC')) return -1;
+            if (title.startsWith('🔴 REC')) return 1;
+            return 0; // Live stream
+        };
+
+        const catA = getDvrCategory(streamA.title);
+        const catB = getDvrCategory(streamB.title);
+
+        // Different categories - sort by category
+        if (catA !== catB) {
+            return catA - catB;
+        }
+
+        // Same category - use stream priority
+        // For DVR "REC" entries, extract the stream title and use that for priority
+        let prioStreamA = streamA;
+        let prioStreamB = streamB;
+
+        if (catA === 1) {
+            // Extract stream info from "🔴 REC (4h) <stream_title>"
+            const extractTitle = (t: string) => t.replace(/^🔴 REC \(\d+h\) /, '');
+            prioStreamA = { url: streamA.url, title: extractTitle(streamA.title) };
+            prioStreamB = { url: streamB.url, title: extractTitle(streamB.title) };
+        }
+
+        const prioA = getStreamPriority(prioStreamA);
+        const prioB = getStreamPriority(prioStreamB);
         if (prioA !== prioB) return prioA - prioB;
-        // Se stessa priorità, ordina alfabeticamente per titolo
-        return streamA.title.localeCompare(streamB.title);
+
+        // Same priority - alphabetical
+        return prioStreamA.title.localeCompare(prioStreamB.title);
     });
 }
 
@@ -600,12 +673,12 @@ function isCfDlhdProxy(u: string): boolean { return extractDlhdIdFromCf(u) !== n
 // ================= MANIFEST BASE (restored) =================
 const baseManifest: Manifest = {
     id: "org.stremio.vixcloud",
-    version: "9.6.23",
+    version: "10.0.23",
     name: "StreamViX | Elfhosted",
     description: "StreamViX addon con StreamingCommunity, Guardaserie, Altadefinizione, AnimeUnity, AnimeSaturn, AnimeWorld, Eurostreaming, TV ed Eventi Live",
     background: "https://raw.githubusercontent.com/qwertyuiop8899/StreamViX/refs/heads/main/public/backround.png",
     types: ["movie", "series", "tv", "anime"],
-    idPrefixes: ["tt", "kitsu", "tv", "mal", "tmdb"],
+    idPrefixes: ["tt", "kitsu", "tv", "mal", "tmdb", "dvr"],
     catalogs: [
         {
             id: "streamvix_tv",
@@ -641,8 +714,10 @@ const baseManifest: Manifest = {
                     name: "genre",
                     options: [
                         "X-Eventi",
-                        "Z-Eventi",
+                        // "Z-Eventi",
                         "THISNOT",
+                        "SportzX",
+                        "Sports99",
                         "Serie A",
                         "Serie B",
                         "Serie C",
@@ -669,6 +744,19 @@ const baseManifest: Manifest = {
                 { name: "genre", isRequired: false },
                 { name: "search", isRequired: false }
             ]
+        },
+        {
+            id: "streamvix_dvr",
+            type: "tv",
+            name: "StreamViX DVR",
+            extra: [
+                {
+                    name: "genre",
+                    isRequired: false,
+                    options: ["All Recordings"]
+                },
+                { name: "search", isRequired: false }
+            ]
         }
     ],
     resources: ["stream", "catalog", "meta"],
@@ -677,14 +765,15 @@ const baseManifest: Manifest = {
         { key: "tmdbApiKey", title: "TMDB API Key", type: "text" },
         { key: "mediaFlowProxyUrl", title: "☂️ Proxy URL", type: "text" },
         { key: "mediaFlowProxyPassword", title: "Proxy Password (opzionale)", type: "text" },
+        { key: "dvrEnabled", title: "DVR (EasyProxy only) 📹", type: "checkbox" },
         // { key: "enableMpd", title: "Enable MPD Streams", type: "checkbox" },
         { key: "disableVixsrc", title: "Disable StreamingCommunity", type: "checkbox" },
         { key: "vixDirect", title: "StreamingCommunity Direct mode", type: "checkbox" },
         { key: "vixDirectFhd", title: "StreamingCommunity Direct FHD mode", type: "checkbox" },
         { key: "vixProxy", title: "StreamingCommunity Proxy mode", type: "checkbox" },
         { key: "vixProxyFhd", title: "StreamingCommunity Proxy FHD mode", type: "checkbox" },
-        { key: "disableLiveTv", title: "Live TV 📺 [Molti canali hanno bisogno di MFP]", type: "checkbox", default: false },
-        { key: "trailerEnabled", title: "🎬▶️ Trailer", type: "checkbox", default: true },
+        { key: "disableLiveTv", title: "Live TV 📺 [Molti canali hanno bisogno di MFP]", type: "checkbox" },
+        { key: "trailerEnabled", title: "🎬▶️ Trailer", type: "checkbox", default: "checked" },
         { key: "animeunityEnabled", title: "Enable AnimeUnity", type: "checkbox" },
         { key: "animeunityAuto", title: "AnimeUnity AUTO mode", type: "checkbox" },
         { key: "animeunityFhd", title: "AnimeUnity FHD mode", type: "checkbox" },
@@ -698,13 +787,16 @@ const baseManifest: Manifest = {
         { key: "loonexEnabled", title: "Enable Loonex", type: "checkbox" },
         { key: "toonitaliaEnabled", title: "Enable ToonItalia", type: "checkbox" },
         { key: "cb01Enabled", title: "Enable CB01 Mixdrop", type: "checkbox" },
-        // { key: "tvtapProxyEnabled", title: "TvTap NO MFP 🔓", type: "checkbox", default: true }, // TVTAP RIMOSSO
-        { key: "vavooNoMfpEnabled", title: "Vavoo NO MFP 🔓", type: "checkbox", default: true },
+        // { key: "tvtapProxyEnabled", title: "TvTap NO MFP 🔓", type: "checkbox", default: "checked" }, // TVTAP RIMOSSO
+        { key: "vavooNoMfpEnabled", title: "Vavoo NO MFP 🔓", type: "checkbox", default: false },
         // UI helper toggles (not used directly server-side but drive dynamic form logic)
         { key: "personalTmdbKey", title: "TMDB API KEY Personale", type: "checkbox" },
-        { key: "mediaflowMaster", title: "MediaflowProxy", type: "checkbox", default: false },
-
-    ]
+        { key: "mediaflowMaster", title: "MediaflowProxy", type: "checkbox" },
+    ],
+    stremioAddonsConfig: {
+        issuer: "https://stremio-addons.net",
+        signature: "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..lq-o2JziPJNLx0ktbXf4Cg.4k4_nsv-K378IN3bdkw5AzfIMtQyhlw0v8lWwtAFNx9W0OdkP6lczmlPOYqKYQ6OA4dU6N3GicW08Wdxm78wreyU4Irtn_A_BAoVc-EGUIC-C9-N68V0J4wLvFWogSKY.OlNc0_M7cbDgDVSNBihFUQ"
+    }
 };
 
 // Load custom configuration if available
@@ -1479,15 +1571,24 @@ function createBuilder(initialConfig: AddonConfig = {}) {
     // Applica un filtro leggero al manifest per nascondere il catalogo TV quando disabilitato
     const effectiveManifest: Manifest = (() => {
         try {
+            const filtered = { ...manifest } as Manifest;
+            const cats = Array.isArray(filtered.catalogs) ? filtered.catalogs.slice() : [];
+
+            // Rimuovi cataloghi TV quando disabilitato
             if (initialConfig && (initialConfig as any).disableLiveTv) {
-                const filtered = { ...manifest } as Manifest;
-                const cats = Array.isArray(filtered.catalogs) ? filtered.catalogs.slice() : [];
-                // Rimuovi ENTRAMBI i cataloghi TV (streamvix_tv + streamvix_live) quando disabilitato
                 filtered.catalogs = cats.filter((c: any) =>
                     !(c && ((c as any).id === 'streamvix_tv' || (c as any).id === 'streamvix_live'))
                 );
-                return filtered;
             }
+
+            // Rimuovi catalogo DVR quando dvrEnabled non è attivo
+            if (!initialConfig || !(initialConfig as any).dvrEnabled) {
+                filtered.catalogs = (filtered.catalogs || []).filter((c: any) =>
+                    !(c && (c as any).id === 'streamvix_dvr')
+                );
+            }
+
+            return filtered;
         } catch { }
         return manifest;
     })();
@@ -1499,7 +1600,7 @@ function createBuilder(initialConfig: AddonConfig = {}) {
     const builder = new addonBuilder(effectiveManifest);
 
     // === TV CATALOG HANDLER ONLY ===
-    builder.defineCatalogHandler(async ({ type, id, extra }: { type: string; id: string; extra?: any }) => {
+    builder.defineCatalogHandler(async ({ type, id, extra, config: requestConfig }: { type: string; id: string; extra?: any; config?: any }) => {
         if (type === "tv") {
             // Simple runtime toggle: hide TV when disabled
             try {
@@ -1565,7 +1666,130 @@ function createBuilder(initialConfig: AddonConfig = {}) {
             } else if (id === 'streamvix_live') {
                 // Solo canali live/dinamici (hanno _dynamic: true)
                 filteredChannels = filteredChannels.filter((c: any) => c._dynamic);
+                // INTEGRATION: Add SportZX channels to Live catalog
+                const sportzx = getSportzxChannels();
+                if (sportzx.length > 0) {
+                    filteredChannels = [...filteredChannels, ...sportzx];
+                }
+                // INTEGRATION: Add Sports99 channels to Live catalog
+                const sports99 = getSports99Channels();
+                if (sports99.length > 0) {
+                    filteredChannels = [...filteredChannels, ...sports99];
+                }
                 // console.log(`[CATALOG] streamvix_live -> filtered dynamic count=${filteredChannels.length}`);
+            } else if (id === 'streamvix_dvr') {
+                // DVR catalog - fetch recordings from EasyProxy
+                try {
+                    const { getDvrConfig, formatDuration, formatFileSize } = await import('./utils/easyproxyDvr');
+                    // Use request config (user's config from URL) with fallback to configCache
+                    const cfg = requestConfig && Object.keys(requestConfig).length > 0
+                        ? { ...requestConfig }
+                        : { ...configCache };
+                    console.log(`📹 DVR catalog: Using config dvrEnabled=${cfg.dvrEnabled}, mediaFlowProxyUrl=${cfg.mediaFlowProxyUrl?.substring(0, 30)}...`);
+                    const dvrConfig = getDvrConfig(cfg);
+
+                    if (!dvrConfig) {
+                        console.log('📹 DVR catalog: DVR not configured');
+                        return { metas: [], cacheMaxAge: 60 };
+                    }
+
+                    // Fetch all recordings from EasyProxy
+                    const params = new URLSearchParams();
+                    if (dvrConfig.apiPassword) {
+                        params.set('api_password', dvrConfig.apiPassword);
+                    }
+                    const url = `${dvrConfig.easyProxyUrl}/api/recordings?${params.toString()}`;
+
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 10000);
+
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            ...(dvrConfig.apiPassword ? { 'x-api-password': dvrConfig.apiPassword } : {})
+                        },
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeout);
+
+                    if (!response.ok) {
+                        console.warn(`📹 DVR catalog: Failed to fetch recordings: ${response.status}`);
+                        return { metas: [], cacheMaxAge: 60 };
+                    }
+
+                    const data = await response.json();
+                    const recordings = data.recordings || [];
+
+                    console.log(`📹 DVR catalog: API returned ${recordings.length} recordings`);
+                    if (recordings.length > 0) {
+                        console.log(`📹 DVR catalog: First recording:`, JSON.stringify(recordings[0], null, 2));
+                    }
+
+                    // Filter to only completed/stopped recordings with files
+                    const validRecordings = recordings.filter((rec: any) => {
+                        const hasValidFile = rec.file_size_bytes && rec.file_size_bytes > 0;
+                        const isFinished = ['completed', 'stopped', 'failed'].includes(rec.status);
+                        return isFinished && hasValidFile && !rec.is_active;
+                    });
+
+                    // Also include active recordings (check is_active OR status)
+                    const activeRecordings = recordings.filter((rec: any) =>
+                        rec.is_active || rec.status === 'recording' || rec.status === 'starting'
+                    );
+
+                    console.log(`📹 DVR catalog: ${activeRecordings.length} active, ${validRecordings.length} completed`);
+
+                    // Convert to Stremio meta format
+                    const metas = [...activeRecordings, ...validRecordings].map((rec: any) => {
+                        const isActive = rec.is_active || rec.status === 'recording' || rec.status === 'starting';
+                        const elapsed = rec.elapsed_seconds ? formatDuration(rec.elapsed_seconds) : '';
+                        const duration = rec.duration_seconds ? formatDuration(rec.duration_seconds) : '';
+                        const size = rec.file_size_bytes ? formatFileSize(rec.file_size_bytes) : '';
+                        const date = rec.started_at ? new Date(rec.started_at).toLocaleDateString() : '';
+                        const time = rec.started_at ? new Date(rec.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+                        // Build display name - strip source tags like [FREE], [MPD2] etc
+                        let displayName = (rec.name || 'Recording').replace(/^\[([^\]]+)\]\s*/, '');
+
+                        // For active recordings, show elapsed time
+                        // For completed recordings, show duration
+                        const timeInfo = isActive ? elapsed : duration;
+                        if (timeInfo) {
+                            displayName = `[${timeInfo}] ${displayName}`;
+                        }
+
+                        const statusPrefix = isActive ? '🔴 ' : '📹 ';
+
+                        // Build description with more details
+                        let details: string;
+                        if (isActive) {
+                            const startedInfo = time ? `Started ${time}` : '';
+                            details = [startedInfo, elapsed ? `${elapsed} elapsed` : 'Starting...'].filter(Boolean).join(' • ');
+                        } else {
+                            details = [duration, size, date].filter(Boolean).join(' • ');
+                        }
+
+                        return {
+                            id: `dvr:${rec.id}`,
+                            type: 'tv',
+                            name: `${statusPrefix}${displayName}`,
+                            poster: 'https://raw.githubusercontent.com/qwertyuiop8899/StreamViX/refs/heads/main/public/logo.png',
+                            posterShape: 'landscape',
+                            description: details,
+                            genres: ['DVR'],
+                            // Store recording data for stream handler
+                            _dvrRecording: rec
+                        };
+                    });
+
+                    console.log(`📹 DVR catalog: Returning ${metas.length} recordings`);
+                    return { metas, cacheMaxAge: 30 }; // Short cache for DVR
+
+                } catch (error) {
+                    console.error('📹 DVR catalog error:', error);
+                    return { metas: [], cacheMaxAge: 60 };
+                }
             }
 
             let requestedSlug: string | null = null;
@@ -1611,7 +1835,7 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                     return false;
                 };
 
-                filteredChannels = tvChannels.filter((c: any) => {
+                filteredChannels = filteredChannels.filter((c: any) => {
                     const categories = getChannelCategories(c); // include category slugs
                     const categoryStr = categories.join(' ');
                     const hayRaw = `${c.name || ''} ${(c.description || '')} ${categoryStr}`.toLowerCase();
@@ -1692,13 +1916,17 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                     genreMap['bundesliga'] = 'bundesliga';
                     genreMap['ligue 1'] = 'ligue1';
                     genreMap['thisnot'] = 'thisnot';
+                    genreMap['ligue 1'] = 'ligue1';
+                    genreMap['thisnot'] = 'thisnot';
                     genreMap['ppv'] = 'ppv';
+                    genreMap['sportzx'] = 'sportzx'; // lowercase to match getChannelCategories() output
+                    genreMap['sports99'] = 'sports99'; // Sports99 channels
                     const target = genreMap[norm] || norm;
                     requestedSlug = target;
 
                     // DEBUG: Log primi 5 canali ThisNot PRIMA del filtro
                     if (target === 'thisnot') {
-                        const thisnotChannels = tvChannels.filter((ch: any) => {
+                        const thisnotChannels = filteredChannels.filter((ch: any) => {
                             const catRaw = ch.category;
                             return catRaw === 'thisnot' || catRaw === 'THISNOT' || (Array.isArray(catRaw) && catRaw.includes('thisnot'));
                         }).slice(0, 5);
@@ -1708,7 +1936,7 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                         });
                     }
 
-                    filteredChannels = tvChannels.filter(ch => getChannelCategories(ch).includes(target));
+                    filteredChannels = filteredChannels.filter(ch => getChannelCategories(ch).includes(target));
                     console.log(`🔍 Genre='${norm}' -> slug='${target}' results=${filteredChannels.length}`);
                 } else {
                     console.log(`📺 No genre filter, showing all ${tvChannels.length} channels`);
@@ -1921,7 +2149,7 @@ function createBuilder(initialConfig: AddonConfig = {}) {
     });
 
     // === HANDLER META ===
-    builder.defineMetaHandler(async ({ type, id }: { type: string; id: string }) => {
+    builder.defineMetaHandler(async ({ type, id, config: requestConfig }: { type: string; id: string; config?: any }) => {
         console.log(`📺 META REQUEST: type=${type}, id=${id}`);
         if (type === "tv") {
             // Gestisci tutti i possibili formati di ID che Stremio può inviare
@@ -1935,6 +2163,132 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                 cleanId = decodeURIComponent(id);
                 if (cleanId.startsWith('tv:')) {
                     cleanId = cleanId.replace('tv:', '');
+                }
+            }
+
+            // === DVR META HANDLER ===
+            // Handle DVR recording meta requests (IDs starting with dvr:)
+            if (id.startsWith('dvr:') || id.startsWith('dvr%3A') || cleanId.startsWith('dvr:')) {
+                // Extract recording ID - handle both encoded (dvr%3A) and unencoded (dvr:) formats
+                const recordingId = id.replace(/^dvr%3A/i, '').replace(/^dvr:/i, '');
+                console.log(`📹 DVR meta request for recording: ${recordingId} (original id: ${id})`);
+
+                try {
+                    const { getDvrConfig, formatDuration, formatFileSize } = await import('./utils/easyproxyDvr');
+                    // Use request config with fallback to configCache
+                    const cfg = requestConfig && Object.keys(requestConfig).length > 0
+                        ? { ...requestConfig }
+                        : { ...configCache };
+                    console.log(`📹 DVR meta: Using config dvrEnabled=${cfg.dvrEnabled}, mediaFlowProxyUrl=${cfg.mediaFlowProxyUrl?.substring(0, 30)}...`);
+                    const dvrConfig = getDvrConfig(cfg);
+
+                    if (!dvrConfig) {
+                        console.warn('📹 DVR meta: DVR not configured');
+                        return { meta: null };
+                    }
+
+                    // Fetch recording details
+                    const params = new URLSearchParams();
+                    if (dvrConfig.apiPassword) {
+                        params.set('api_password', dvrConfig.apiPassword);
+                    }
+                    const apiUrl = `${dvrConfig.easyProxyUrl}/api/recordings/${recordingId}?${params.toString()}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            ...(dvrConfig.apiPassword ? { 'x-api-password': dvrConfig.apiPassword } : {})
+                        }
+                    });
+
+                    if (!response.ok) {
+                        console.warn(`📹 DVR meta: Recording not found: ${response.status}`);
+                        return { meta: null };
+                    }
+
+                    const recording = await response.json();
+                    const duration = recording.duration_seconds ? formatDuration(recording.duration_seconds) : '';
+                    const size = recording.file_size_bytes ? formatFileSize(recording.file_size_bytes) : '';
+                    const date = recording.started_at ? new Date(recording.started_at).toLocaleDateString() : '';
+                    const isActive = recording.is_active;
+
+                    let displayName = recording.name || 'Recording';
+                    if (duration) {
+                        const tagPattern = /^\[([^\]]+)\]\s*/;
+                        if (tagPattern.test(displayName)) {
+                            displayName = displayName.replace(tagPattern, `[${duration}] `);
+                        } else {
+                            displayName = `[${duration}] ${displayName}`;
+                        }
+                    }
+
+                    const statusPrefix = isActive ? '🔴 ' : '📹 ';
+                    const details = isActive
+                        ? `Recording in progress...`
+                        : [size, date].filter(Boolean).join(' | ');
+
+                    console.log(`📹 DVR meta: Returning meta for ${recordingId}`);
+                    return {
+                        meta: {
+                            id: `dvr:${recordingId}`,
+                            type: 'tv',
+                            name: `${statusPrefix}${displayName}`,
+                            poster: 'https://raw.githubusercontent.com/qwertyuiop8899/StreamViX/refs/heads/main/public/logo.png',
+                            posterShape: 'landscape',
+                            background: 'https://raw.githubusercontent.com/qwertyuiop8899/StreamViX/refs/heads/main/public/logo.png',
+                            description: details,
+                            genres: ['DVR']
+                        }
+                    };
+
+                } catch (error) {
+                    console.error('📹 DVR meta error:', error);
+                    return { meta: null };
+                }
+            }
+
+            // === SPORTZX META HANDLER ===
+            if (cleanId.startsWith('sportzx_')) {
+                const { getSportzxChannels } = await import('./utils/sportzxUpdater');
+                const sportzxChannel = getSportzxChannels().find((c: any) => c.id === cleanId);
+                if (sportzxChannel) {
+                    console.log(`✅ Found SportzX channel for meta: ${sportzxChannel.name}`);
+                    return {
+                        meta: {
+                            id: `tv:${sportzxChannel.id}`,
+                            type: 'tv',
+                            name: sportzxChannel.name,
+                            poster: sportzxChannel.logo,
+                            posterShape: 'square',
+                            background: sportzxChannel.logo,
+                            description: sportzxChannel.description || 'SportzX Live Stream',
+                            genres: ['SportzX', 'Live', 'Sport'],
+                            releaseInfo: 'Live Event'
+                        }
+                    };
+                }
+            }
+
+            // === SPORTS99 META HANDLER ===
+            if (cleanId.startsWith('sports99_')) {
+                const { getSports99Channels } = await import('./utils/sports99Updater');
+                const sports99Channel = getSports99Channels().find((c: any) => c.id === cleanId);
+                if (sports99Channel) {
+                    console.log(`✅ Found Sports99 channel for meta: ${sports99Channel.name}`);
+                    return {
+                        meta: {
+                            id: `tv:${sports99Channel.id}`,
+                            type: 'tv',
+                            name: sports99Channel.name,
+                            poster: sports99Channel.logo,
+                            posterShape: 'square',
+                            background: sports99Channel.logo,
+                            description: sports99Channel.description || 'Sports99 Live Stream',
+                            genres: ['Sports99', 'Live', 'Sport'],
+                            releaseInfo: 'Live Event'
+                        }
+                    };
                 }
             }
 
@@ -2169,6 +2523,89 @@ function createBuilder(initialConfig: AddonConfig = {}) {
 
                 console.log(`🔍 Stream request: ${normalizedType}/${id}`);
 
+                // === SPORTZX STREAM HANDLER ===
+                const cleanIdForSportzx = id.startsWith('tv:') ? id.replace('tv:', '') : id;
+                if (cleanIdForSportzx.startsWith('sportzx_')) {
+                    const { getSportzxChannels } = await import('./utils/sportzxUpdater');
+                    const sportzxChannel = getSportzxChannels().find((c: any) => c.id === cleanIdForSportzx);
+                    if (sportzxChannel && sportzxChannel._sportzx) {
+                        const match = sportzxChannel._sportzx;
+                        console.log(`✅ Found SportzX stream for: ${sportzxChannel.name}`);
+
+                        let finalUrl = match.stream_url;
+                        let title = '🔴 LIVE (Direct)';
+
+                        // Get MFP config
+                        const mfpUrlRaw = requestConfig?.mediaFlowProxyUrl || configCache?.mediaFlowProxyUrl || process.env.MFP_URL;
+                        const mfpUrl = mfpUrlRaw ? mfpUrlRaw.replace(/\/+$/, '') : ''; // Remove trailing slash
+                        const mfpPsw = requestConfig?.mediaFlowProxyPassword || configCache?.mediaFlowProxyPassword || process.env.MFP_PSW;
+
+                        // 1. MPD with Keys -> Proxy
+                        if (match.keyid && match.key && mfpUrl) {
+                            const passwordParam = mfpPsw ? `&api_password=${encodeURIComponent(mfpPsw)}` : '';
+                            const encodedUrl = encodeURIComponent(match.stream_url);
+                            finalUrl = `${mfpUrl}/proxy/mpd/manifest.m3u8?d=${encodedUrl}${passwordParam}&key_id=${match.keyid}&key=${match.key}`;
+                            title = '🌐 🔴 LIVE (Proxy MPD)';
+                        }
+                        // 2. M3U with Headers -> Proxy
+                        else if (match.headers && match.headers.trim() && mfpUrl) {
+                            const headersObj: any = {};
+                            (match.headers as string).split('&').forEach((pair: string) => {
+                                const [k, v] = pair.split('=');
+                                if (k && v) headersObj[k] = decodeURIComponent(v);
+                            });
+                            const headersJson = encodeURIComponent(JSON.stringify(headersObj));
+                            const passwordParam = mfpPsw ? `&api_password=${encodeURIComponent(mfpPsw)}` : '';
+                            const encodedUrl = encodeURIComponent(match.stream_url);
+                            finalUrl = `${mfpUrl}/proxy/hls/manifest.m3u8?d=${encodedUrl}${passwordParam}&headers=${headersJson}`;
+                            title = '🌐 🔴 LIVE (Proxy HLS)';
+                        }
+                        // 3. Plain -> Direct
+
+                        return {
+                            streams: [{
+                                url: finalUrl,
+                                title: title,
+                                name: 'SportzX',
+                                behaviorHints: {
+                                    notWebReady: true
+                                }
+                            }]
+                        };
+                    }
+                }
+
+                // === SPORTS99 STREAM HANDLER ===
+                if (cleanIdForSportzx.startsWith('sports99_')) {
+                    const { getSports99Channels } = await import('./utils/sports99Updater');
+                    const { Sports99Client } = await import('./extractors/sports99');
+                    const sports99Channel = getSports99Channels().find((c: any) => c.id === cleanIdForSportzx);
+                    if (sports99Channel && sports99Channel._sports99) {
+                        const match = sports99Channel._sports99;
+                        console.log(`✅ Found Sports99 stream for: ${sports99Channel.name}`);
+
+                        // Resolve the player URL to get M3U8
+                        const client = new Sports99Client();
+                        const streamUrl = await client.resolveStreamUrl(match.player_url);
+
+                        if (streamUrl) {
+                            return {
+                                streams: [{
+                                    url: streamUrl,
+                                    title: '🔴 LIVE',
+                                    name: match.channel_name || 'Sports99',
+                                    behaviorHints: {
+                                        notWebReady: true
+                                    }
+                                }]
+                            };
+                        } else {
+                            console.warn(`[Sports99] Could not resolve stream for ${sports99Channel.name}`);
+                            return { streams: [] };
+                        }
+                    }
+                }
+
                 // FIX DEFINITIVO: L'MFP viene preso dalla config dell'utente (requestConfig)
                 // Se l'utente non ha MFP configurato, usa env vars come fallback (per installazioni locali)
                 // MAI dalla configCache globale (che era il bug - veniva contaminata da altri utenti)
@@ -2176,6 +2613,11 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                 if (requestConfig && Object.keys(requestConfig).length > 0) {
                     config = { ...requestConfig };
                 }
+                // === SPORTZX DEBUG ENDPOINT ===
+
+
+                // NOTE: Il middleware ora converte Base64→JSON prima che l'SDK processi la request,
+                // quindi requestConfig dovrebbe sempre contenere la config utente correttamente.
 
                 // MFP: prima dalla config utente, poi da env vars (per installazioni locali)
                 // NORMALIZZA: rimuovi trailing slash per evitare doppi slash in URL tipo /proxy/...
@@ -2185,7 +2627,82 @@ function createBuilder(initialConfig: AddonConfig = {}) {
 
                 const allStreams: Stream[] = [];
 
+                // === DVR STREAM HANDLER ===
+                // Handle DVR recording playback (IDs starting with dvr:)
+                if (id.startsWith('dvr:') || id.startsWith('dvr%3A')) {
+                    // Extract recording ID - handle both encoded (dvr%3A) and unencoded (dvr:) formats
+                    const recordingId = id.replace(/^dvr%3A/i, '').replace(/^dvr:/i, '');
+                    console.log(`📹 DVR stream request for recording: ${recordingId} (original id: ${id})`);
 
+                    try {
+                        const { getDvrConfig, buildRecordingStreamUrl, buildStopAndStreamUrl, buildRecordingDeleteUrl } = await import('./utils/easyproxyDvr');
+                        const dvrConfig = getDvrConfig(config);
+
+                        if (!dvrConfig) {
+                            console.warn('📹 DVR stream: DVR not configured');
+                            return { streams: [] };
+                        }
+
+                        // Fetch recording details to check if active
+                        const params = new URLSearchParams();
+                        if (dvrConfig.apiPassword) {
+                            params.set('api_password', dvrConfig.apiPassword);
+                        }
+                        const apiUrl = `${dvrConfig.easyProxyUrl}/api/recordings/${recordingId}?${params.toString()}`;
+
+                        const response = await fetch(apiUrl, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json',
+                                ...(dvrConfig.apiPassword ? { 'x-api-password': dvrConfig.apiPassword } : {})
+                            }
+                        });
+
+                        if (!response.ok) {
+                            console.warn(`📹 DVR stream: Recording not found: ${response.status}`);
+                            return { streams: [] };
+                        }
+
+                        const recording = await response.json();
+                        const streams: Stream[] = [];
+
+                        const isActive = recording.is_active || recording.status === 'recording' || recording.status === 'starting';
+                        console.log(`📹 DVR stream: recording status=${recording.status}, is_active=${recording.is_active}, isActive=${isActive}`);
+
+                        if (isActive) {
+                            // Active recording - offer stop & watch
+                            const stopStreamUrl = buildStopAndStreamUrl(dvrConfig, recordingId);
+                            streams.push({
+                                url: stopStreamUrl,
+                                title: '🔴 Stop Recording & Watch',
+                                behaviorHints: { notWebReady: false }
+                            });
+                        } else {
+                            // Completed recording - stream directly
+                            const streamUrl = buildRecordingStreamUrl(dvrConfig, recordingId);
+                            streams.push({
+                                url: streamUrl,
+                                title: `📹 Play Recording`,
+                                behaviorHints: { notWebReady: false }
+                            });
+                        }
+
+                        // Add delete option for all recordings
+                        const deleteUrl = buildRecordingDeleteUrl(dvrConfig, recordingId);
+                        streams.push({
+                            url: deleteUrl,
+                            title: `🗑️ DELETE Recording`,
+                            behaviorHints: { notWebReady: true }
+                        });
+
+                        console.log(`📹 DVR stream: Returning ${streams.length} streams for ${recordingId}`);
+                        return { streams };
+
+                    } catch (error) {
+                        console.error('📹 DVR stream error:', error);
+                        return { streams: [] };
+                    }
+                }
 
                 // === LOGICA TV ===
                 if (type === "tv") {
@@ -2472,7 +2989,10 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                         }
 
                         // === Z-Eventi & X-Eventi EARLY RETURN: MPD con chiavi - costruisce URL proxy usando config utente ===
+                        /* Z-Eventi DISABLED
                         const isZEventi = channelCategory === 'Z-EVENTI' || (channel as any).id?.startsWith('zeventi_');
+                        */
+                        const isZEventi = false;
                         const isXEventi = channelCategory === 'X-Eventi' || channelCategory === 'X-EVENTI' || (channel as any).id?.startsWith('xeventi_');
 
                         if (isZEventi || isXEventi) {
@@ -3074,6 +3594,7 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                         } catch (e) {
                             console.error('[MPDx] Injection error:', (e as any)?.message || e);
                         }
+
 
                         // (Normalizzazione CF rimossa: ora pubblichiamo link avvolti con extractor on-demand)
                         // Append leftover entries (beyond CAP) con stessa logica on-demand (proxy/hls diretto)
@@ -4029,6 +4550,138 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                                 streams.splice(insertPos, 0, freeshotStream);
                             }
                         } catch { }
+                        // === SPORTZX & SPORTS99 STREAM INJECTION (Fuzzy Match) ===
+                        try {
+                            // Helper Fuzzy Match (locale per lo stream handler)
+                            const fuzzyMatch = (eventTitle: string, channelTitle: string): boolean => {
+                                const TEAM_ALIASES: Record<string, string> = {
+                                    'juve': 'juventus',
+                                    'fc juventus': 'juventus',
+                                    'inter': 'internazionale',
+                                    'fc inter': 'internazionale',
+                                    'lazio': 'sslazio',
+                                    'ss lazio': 'sslazio',
+                                    'roma': 'asroma',
+                                    'as roma': 'asroma',
+                                    'milan': 'acmilan',
+                                    'ac milan': 'acmilan',
+                                    'napoli': 'sscnapoli',
+                                    'ssc napoli': 'sscnapoli',
+                                    'atalanta': 'atalanta',
+                                    'fiorentina': 'acffiorentina',
+                                    'acf fiorentina': 'acffiorentina'
+                                };
+
+                                const normalize = (s: string) => {
+                                    let clean = s.toLowerCase()
+                                        // Rimuovi parole comuni, date (NN/NN), e termini generici di leghe
+                                        .replace(/\b(vs|v|-|live|hd|it|ita|italy|italia|match|serie|semifinal|quarterfinal|round|cup|league|football|st|nd|rd|th)\b/g, ' ')
+                                        .replace(/\b\d{1,2}[\/-]\d{1,2}\b/g, '') // remove DD/MM or DD-MM
+                                        .replace(/\b[a-z]?\d{1,4}[a-z]?\b/g, '') // remove standalone numbers (years, times, simple numbers)
+                                        .replace(/[^\w\s]/g, '')
+                                        .replace(/\s+/g, ' ')
+                                        .trim();
+
+                                    for (const [alias, target] of Object.entries(TEAM_ALIASES)) {
+                                        const regex = new RegExp(`\\b${alias}\\b`, 'g');
+                                        if (regex.test(clean)) {
+                                            clean = clean.replace(regex, target);
+                                        }
+                                    }
+                                    return clean;
+                                };
+
+                                const t1 = normalize(eventTitle);
+                                const t2 = normalize(channelTitle);
+
+                                const tokens1 = t1.split(' ').filter(t => t.length > 3);
+                                const tokens2 = t2.split(' ').filter(t => t.length > 3);
+
+                                if (tokens1.length === 0 || tokens2.length === 0) return false;
+
+                                const sourceTokens = tokens1.length < tokens2.length ? tokens1 : tokens2;
+                                const targetTokens = tokens1.length < tokens2.length ? tokens2 : tokens1;
+
+                                const ms = sourceTokens.filter(st => targetTokens.some(tt => tt.includes(st) || st.includes(tt)));
+
+                                if (sourceTokens.length === 1) return ms.length === 1;
+                                return ms.length >= 2;
+                            };
+
+                            const eventName = (channel as any).name || '';
+                            if (eventName) {
+                                // 1. SPORTZX Injection
+                                try {
+                                    const { getSportzxChannels } = await import('./utils/sportzxUpdater');
+                                    const spzxChannels = getSportzxChannels();
+                                    const matchedSpzx = spzxChannels.filter((c: any) => fuzzyMatch(eventName, c.name));
+
+                                    for (const c of matchedSpzx) {
+                                        if (c._sportzx) {
+                                            const match = c._sportzx;
+                                            let finalUrl = match.stream_url;
+                                            let proxyUsed = false;
+
+                                            // Proxy Logic (reuse generic logic)
+                                            if (mfpUrl) {
+                                                if (match.keyid && match.key) {
+                                                    const passwordParam = mfpPsw ? `&api_password=${encodeURIComponent(mfpPsw)}` : '';
+                                                    finalUrl = `${mfpUrl}/proxy/mpd/manifest.m3u8?d=${encodeURIComponent(match.stream_url)}${passwordParam}&key_id=${match.keyid}&key=${match.key}`;
+                                                    proxyUsed = true;
+                                                } else if (match.headers && match.headers.trim()) {
+                                                    const headersObj: any = {};
+                                                    (match.headers as string).split('&').forEach((pair: string) => {
+                                                        const [k, v] = pair.split('=');
+                                                        if (k && v) headersObj[k] = decodeURIComponent(v);
+                                                    });
+                                                    const headersJson = encodeURIComponent(JSON.stringify(headersObj));
+                                                    const passwordParam = mfpPsw ? `&api_password=${encodeURIComponent(mfpPsw)}` : '';
+                                                    finalUrl = `${mfpUrl}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(match.stream_url)}${passwordParam}&headers=${headersJson}`;
+                                                    proxyUsed = true;
+                                                }
+                                            }
+
+                                            streams.push({
+                                                url: finalUrl,
+                                                title: `[SPZX] ${c._sportzx.channel_title || c.name}`,
+                                                behaviorHints: { notWebReady: true }
+                                            } as any);
+                                            console.log(`✅ [SPZX] Injected stream for ${eventName} -> ${c.name}`);
+                                        }
+                                    }
+                                } catch (e) { console.error('Error injecting SportzX', e); }
+
+                                // 2. SPORTS99 Injection
+                                try {
+                                    const { getSports99Channels } = await import('./utils/sports99Updater');
+                                    const { Sports99Client } = await import('./extractors/sports99');
+                                    const sp99Channels = getSports99Channels();
+                                    const matchedSp99 = sp99Channels.filter((c: any) => fuzzyMatch(eventName, c.name));
+
+                                    if (matchedSp99.length > 0) {
+                                        const client99 = new Sports99Client();
+                                        // Resolve async
+                                        for (const c of matchedSp99) {
+                                            if (c._sports99 && c._sports99.player_url) {
+                                                const sUrl = await client99.resolveStreamUrl(c._sports99.player_url);
+                                                if (sUrl) {
+                                                    streams.push({
+                                                        url: sUrl,
+                                                        title: `[SP99] ${c._sports99.channel_name || c.name}`,
+                                                        behaviorHints: { notWebReady: true }
+                                                    } as any);
+                                                    console.log(`✅ [SP99] Injected stream for ${eventName} -> ${c.name}`);
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (e) { console.error('Error injecting Sports99', e); }
+                            }
+
+                        } catch (e) {
+                            console.error('Generic injection error', e);
+                        }
+
                         // === SPON (sportzonline) injection (always-on, no placeholders / no time gating) ===
                         try {
                             const eventNameRaw = (channel as any).name || '';
@@ -4133,6 +4786,8 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                             console.log('[SPON] ❌ Error:', (e as any)?.message || e);
                             debugLog('[SPON] injection error', e);
                         }
+
+
                         const allowVavooClean = true; // simplified: always allow clean Vavoo variant
                         for (const s of streams) {
                             // Support special marker '#headers#<b64json>' to attach headers properly
@@ -4166,6 +4821,94 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                         } catch (sortErr) {
                             debugLog(`[DynamicEvents] Errore ordinamento:`, String((sortErr as any)?.message || sortErr));
                         }
+
+                        // === DVR INTEGRATION FOR DYNAMIC EVENTS ===
+                        const dynDvrConfig = getDvrConfig(config as any);
+                        const dynDvrEnabled = dynDvrConfig && ((config as any).dvrEnabled !== false);
+                        if (dynDvrEnabled && allStreams.length > 0) {
+                            try {
+                                const dvrRecordStreams: typeof allStreams = [];
+
+                                // Add a DVR record entry for each valid stream
+                                for (const stream of allStreams) {
+                                    if (!stream.url || stream.url.includes('nostream')) continue;
+
+                                    // Extract the source URL from proxied stream if applicable
+                                    // Also preserve key_id and key parameters for DRM-protected streams
+                                    let recordUrl = stream.url;
+                                    const dMatch = stream.url.match(/[?&]d=([^&]+)/);
+                                    if (dMatch) {
+                                        recordUrl = decodeURIComponent(dMatch[1]);
+                                        // Extract and append key_id and key if present
+                                        const keyIdMatch = stream.url.match(/[?&]key_id=([^&]+)/);
+                                        const keyMatch = stream.url.match(/[?&]key=([^&]+)/);
+                                        if (keyIdMatch && keyMatch) {
+                                            const separator = recordUrl.includes('?') ? '&' : '?';
+                                            recordUrl += `${separator}key_id=${keyIdMatch[1]}&key=${keyMatch[1]}`;
+                                        }
+                                    }
+
+                                    const dvrEntry = buildDvrRecordEntry(
+                                        recordUrl,
+                                        stream.title || 'Stream',
+                                        channel.name || cleanId,
+                                        { addonConfig: config as any }
+                                    );
+
+                                    if (dvrEntry) {
+                                        dvrRecordStreams.push({
+                                            name: 'DVR',
+                                            title: dvrEntry.title,
+                                            url: dvrEntry.url,
+                                            behaviorHints: { notWebReady: false } as any
+                                        });
+                                    }
+                                }
+
+                                // Also add active/completed recordings
+                                const firstStream = allStreams.find(s => s.url && !s.url.includes('nostream'));
+                                if (firstStream) {
+                                    let recordUrl = firstStream.url;
+                                    const dMatch = firstStream.url.match(/[?&]d=([^&]+)/);
+                                    if (dMatch) {
+                                        recordUrl = decodeURIComponent(dMatch[1]);
+                                        // Extract and append key_id and key if present
+                                        const keyIdMatch = firstStream.url.match(/[?&]key_id=([^&]+)/);
+                                        const keyMatch = firstStream.url.match(/[?&]key=([^&]+)/);
+                                        if (keyIdMatch && keyMatch) {
+                                            const separator = recordUrl.includes('?') ? '&' : '?';
+                                            recordUrl += `${separator}key_id=${keyIdMatch[1]}&key=${keyMatch[1]}`;
+                                        }
+                                    }
+
+                                    const dvrStreams = await getDvrStreamsForChannel(
+                                        channel.name || cleanId,
+                                        recordUrl,
+                                        { addonConfig: config as any }
+                                    );
+                                    for (const dvrStream of dvrStreams) {
+                                        dvrRecordStreams.push({
+                                            name: 'DVR',
+                                            title: dvrStream.title,
+                                            url: dvrStream.url,
+                                            behaviorHints: { notWebReady: false } as any
+                                        });
+                                    }
+                                }
+
+                                // Add all DVR streams
+                                for (const dvrStream of dvrRecordStreams) {
+                                    allStreams.push(dvrStream);
+                                }
+
+                                if (dvrRecordStreams.length > 0) {
+                                    console.log(`[DVR] Added ${dvrRecordStreams.length} DVR stream(s) for dynamic event ${channel.name}`);
+                                }
+                            } catch (dvrErr) {
+                                console.warn('[DVR] Error adding DVR streams to dynamic event:', (dvrErr as any)?.message || dvrErr);
+                            }
+                        }
+
                         console.log(`✅ Returning ${allStreams.length} dynamic event streams`);
                         return { streams: allStreams };
                     }
@@ -4283,7 +5026,7 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                     }
                     // Dopo aver popolato streams (nella logica TV):
                     for (const s of streams) {
-                        const allowVavooClean = config.vavooNoMfpEnabled !== false; // default true se non specificato
+                        const allowVavooClean = config.vavooNoMfpEnabled === true; // default false se non specificato
                         const marker = '#headers#';
                         if (s.url.includes(marker)) {
                             const [pureUrl, b64] = s.url.split(marker);
@@ -4308,6 +5051,94 @@ function createBuilder(initialConfig: AddonConfig = {}) {
                     // 5. AGGIUNGI STREAM ALTERNATIVI/FALLBACK per canali specifici
                     // RIMOSSO: Blocco che aggiunge fallback stream alternativi per canali Sky (skyFallbackUrls) se finalStreams.length < 3
                     // return { streams: finalStreamsWithRealUrls };
+
+                    // === DVR INTEGRATION ===
+                    // Add DVR streams (Record option for each stream + active/completed recordings)
+                    const dvrConfig = getDvrConfig(config as any);
+                    const dvrEnabled = dvrConfig && ((config as any).dvrEnabled !== false);
+                    if (dvrEnabled && allStreams.length > 0) {
+                        try {
+                            const dvrRecordStreams: typeof allStreams = [];
+
+                            // Add a DVR record entry for each valid stream
+                            for (const stream of allStreams) {
+                                if (!stream.url || stream.url.includes('nostream')) continue;
+
+                                // Extract the source URL from proxied stream if applicable
+                                // Also preserve key_id and key parameters for DRM-protected streams
+                                let recordUrl = stream.url;
+                                const dMatch = stream.url.match(/[?&]d=([^&]+)/);
+                                if (dMatch) {
+                                    recordUrl = decodeURIComponent(dMatch[1]);
+                                    // Extract and append key_id and key if present
+                                    const keyIdMatch = stream.url.match(/[?&]key_id=([^&]+)/);
+                                    const keyMatch = stream.url.match(/[?&]key=([^&]+)/);
+                                    if (keyIdMatch && keyMatch) {
+                                        const separator = recordUrl.includes('?') ? '&' : '?';
+                                        recordUrl += `${separator}key_id=${keyIdMatch[1]}&key=${keyMatch[1]}`;
+                                    }
+                                }
+
+                                const dvrEntry = buildDvrRecordEntry(
+                                    recordUrl,
+                                    stream.title || 'Stream',
+                                    channel.name || cleanId,
+                                    { addonConfig: config as any }
+                                );
+
+                                if (dvrEntry) {
+                                    dvrRecordStreams.push({
+                                        name: 'DVR',
+                                        title: dvrEntry.title,
+                                        url: dvrEntry.url,
+                                        behaviorHints: { notWebReady: false } as any
+                                    });
+                                }
+                            }
+
+                            // Also add active/completed recordings
+                            const firstStream = allStreams.find(s => s.url && !s.url.includes('nostream'));
+                            if (firstStream) {
+                                let recordUrl = firstStream.url;
+                                const dMatch = firstStream.url.match(/[?&]d=([^&]+)/);
+                                if (dMatch) {
+                                    recordUrl = decodeURIComponent(dMatch[1]);
+                                    // Extract and append key_id and key if present
+                                    const keyIdMatch = firstStream.url.match(/[?&]key_id=([^&]+)/);
+                                    const keyMatch = firstStream.url.match(/[?&]key=([^&]+)/);
+                                    if (keyIdMatch && keyMatch) {
+                                        const separator = recordUrl.includes('?') ? '&' : '?';
+                                        recordUrl += `${separator}key_id=${keyIdMatch[1]}&key=${keyMatch[1]}`;
+                                    }
+                                }
+
+                                const dvrStreams = await getDvrStreamsForChannel(
+                                    channel.name || cleanId,
+                                    recordUrl,
+                                    { addonConfig: config as any }
+                                );
+                                for (const dvrStream of dvrStreams) {
+                                    dvrRecordStreams.push({
+                                        name: 'DVR',
+                                        title: dvrStream.title,
+                                        url: dvrStream.url,
+                                        behaviorHints: { notWebReady: false } as any
+                                    });
+                                }
+                            }
+
+                            // Add all DVR streams
+                            for (const dvrStream of dvrRecordStreams) {
+                                allStreams.push(dvrStream);
+                            }
+
+                            if (dvrRecordStreams.length > 0) {
+                                console.log(`[DVR] Added ${dvrRecordStreams.length} DVR stream(s) for ${channel.name}`);
+                            }
+                        } catch (dvrErr) {
+                            console.warn('[DVR] Error adding DVR streams:', (dvrErr as any)?.message || dvrErr);
+                        }
+                    }
                 }
 
                 // === LOGICA ANIME/FILM (originale) ===
@@ -5179,6 +6010,14 @@ app.get(['/manifest.json', '/:config/manifest.json', '/cfg/:config/manifest.json
                 !(c && ((c as any).id === 'streamvix_tv' || (c as any).id === 'streamvix_live'))
             );
         }
+
+        // Rimuovi catalogo DVR quando dvrEnabled non è attivo
+        const effectiveDvr = (cfgFromUrl as any)?.dvrEnabled ?? (configCache as any)?.dvrEnabled;
+        if (!effectiveDvr) {
+            filtered.catalogs = (filtered.catalogs || []).filter((c: any) =>
+                !(c && (c as any).id === 'streamvix_dvr')
+            );
+        }
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -5412,7 +6251,21 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         if (Object.keys(parsedConfig).length > 0) {
             debugLog('🔧 Found valid config in URL (NOT updating global cache - user-specific)');
             // NON FARE PIÙ: Object.assign(configCache, parsedConfig);
-            // La config dell'utente viene passata tramite requestConfig nell'SDK
+
+            // ✅ FIX: Se la config era Base64, riscrivi l'URL con JSON per l'SDK Stremio
+            // L'SDK Stremio fa JSON.parse() diretto sul segmento, quindi dobbiamo dargli JSON valido
+            if (!configString.startsWith('{') && !configString.startsWith('%7B')) {
+                // Era Base64, riscrivi URL con JSON
+                const jsonConfig = JSON.stringify(parsedConfig);
+                const encodedJsonConfig = encodeURIComponent(jsonConfig);
+                const oldPath = req.path;
+                const newPath = oldPath.replace('/' + configString, '/' + encodedJsonConfig);
+                req.url = req.url.replace(oldPath, newPath);
+                // NOTE: req.path è read-only, ma il router Stremio SDK usa req.url, quindi basta riscrivere quello
+                // Invalida la cache interna di Express per forzare il re-parsing
+                (req as any)._parsedUrl = undefined;
+                debugLog(`🔄 [Base64→JSON] Rewritten URL for SDK: ${configString.substring(0, 30)}... → ${encodedJsonConfig.substring(0, 50)}...`);
+            }
         }
     }
 
@@ -6027,6 +6880,26 @@ app.get(['/static/fupdate', '/tv/update'], async (req: Request, res: Response) =
             htmlLog.push(`<li>❌ <strong>Live (Dynamic Events)</strong>: Error: ${e.message}</li>`);
         }
 
+        // SportZX (in-memory cache)
+        try {
+            const { updateSportzxChannels, getSportzxChannels } = await import('./utils/sportzxUpdater');
+            await updateSportzxChannels();
+            const count = getSportzxChannels().length;
+            htmlLog.push(`<li>✅ <strong>SportzX</strong>: ${count} channels updated (FORCED)</li>`);
+        } catch (e: any) {
+            htmlLog.push(`<li>❌ <strong>SportzX</strong>: Error: ${e.message}</li>`);
+        }
+
+        // Sports99 (in-memory cache)
+        try {
+            const { updateSports99Channels, getSports99Channels } = await import('./utils/sports99Updater');
+            await updateSports99Channels();
+            const count = getSports99Channels().length;
+            htmlLog.push(`<li>✅ <strong>Sports99</strong>: ${count} channels updated (FORCED)</li>`);
+        } catch (e: any) {
+            htmlLog.push(`<li>❌ <strong>Sports99</strong>: Error: ${e.message}</li>`);
+        }
+
         htmlLog.push('</ul>');
 
         // === UNICO RELOAD FINALE ===
@@ -6047,10 +6920,9 @@ app.get(['/static/fupdate', '/tv/update'], async (req: Request, res: Response) =
             htmlLog.push(`<p>✅ <strong>Reload completato!</strong></p>`);
             htmlLog.push(`<ul>`);
             htmlLog.push(`<li>Total channels in memory: <strong>${staticBaseChannels.length}</strong></li>`);
-            htmlLog.push(`<li>staticUrlMpd (Amstaff): <strong>${mpdCount}</strong></li>`);
-            htmlLog.push(`<li>staticUrlMpd2 (RM): <strong>${mpd2Count}</strong></li>`);
-            htmlLog.push(`<li>staticUrlMpdz: <strong>${mpdzCount}</strong></li>`);
-            htmlLog.push(`<li>staticUrlMpdx: <strong>${mpdxCount}</strong></li>`);
+            htmlLog.push(`<li>staticUrlMpd (RM/MPD): <strong>${mpdCount}</strong></li>`);
+            // htmlLog.push(`<li>staticUrlMpd2 (DEPRECATED): <strong>${mpd2Count}</strong></li>`);
+            htmlLog.push(`<li>staticUrlMpdx (MPDx): <strong>${mpdxCount}</strong></li>`);
             htmlLog.push(`</ul>`);
             htmlLog.push(`<p>Total updates this run: <strong>${totalUpdates}</strong></p>`);
         } catch (e: any) {
@@ -6392,8 +7264,11 @@ setTimeout(() => scheduleDailyReload(), 9000);
 // =============== AMSTAFF AUTO-UPDATER ================================
 // Avvia aggiornamento automatico canali Amstaff ogni ora
 // try {
-//     startAmstaffScheduler();
-//     console.log('✅ Amstaff auto-updater attivato');
+//     startSportzxScheduler(); // SportZX
+
+
+
+console.log(`✅ Addon active on port ${process.env.PORT || 7000}`);
 // } catch (e) {
 //     console.error('❌ Errore avvio Amstaff updater:', e);
 // }
@@ -6419,6 +7294,25 @@ try {
     console.error('❌ Errore avvio ThisNot updater:', e);
 }
 // ====================================================================
+
+// =============== SPORTZX AUTO-UPDATER ==============================
+// Avvia aggiornamento automatico canali SportzX ogni 15 minuti
+try {
+    startSportzxScheduler();
+    console.log('✅ SportzX auto-updater attivato (ogni 15 min)');
+} catch (e) {
+    console.error('❌ Errore avvio SportzX updater:', e);
+}
+// ====================================================================
+
+// =============== SPORTS99 AUTO-UPDATER ==============================
+// Avvia aggiornamento automatico canali Sports99 ogni 15 minuti
+try {
+    startSports99Scheduler();
+    console.log('✅ Sports99 auto-updater attivato (ogni 15 min)');
+} catch (e) {
+    console.error('❌ Errore avvio Sports99 updater:', e);
+}
 
 // =============== MPDZ AUTO-UPDATER ==============================
 // Avvia aggiornamento automatico canali MPDz () ogni 23 minuti
